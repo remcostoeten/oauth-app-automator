@@ -17,5 +17,12 @@ if [ -f .env ]; then
   done < .env
 fi
 
+# Check for virtual environment
+if [ -d ".venv" ]; then
+    PYTHON_CMD="./.venv/bin/python3"
+else
+    PYTHON_CMD="python3"
+fi
+
 # Run the Google OAuth automator
-python3 google_oauth_automator.py "$@"
+"$PYTHON_CMD" google_oauth_automator.py "$@"
