@@ -7,7 +7,7 @@ This tool automates the tedious process of creating OAuth applications for both 
 
 If you’re concerned about security, read how this tool [works](#how-it-works).
 
-![Demo](DEMO.gif)
+![Demo](assets/docs/DEMO.gif)
 
 ## Quick Start
 
@@ -22,41 +22,44 @@ Run the interactive setup script to configure dependencies and settings:
 
 _It will verify Python, install dependencies (using `uv` for speed), and help you link your existing Brave or Chrome session (optional)._
 
-**2. Run**
+### Option A: Local Usage (Recommended)
 
-For GitHub OAuth:
+**1. Run Interactive Menu**  
 ```bash
 ./run.sh
 ```
 
-For Google OAuth:
+**2. Direct Commands**  
 ```bash
-python google_oauth_automator.py
+# GitHub
+./run.sh github create
+./run.sh github list
+
+# Google
+./run.sh google create
 ```
 
 ---
 
-### Option B: Global Installation (Use From Anywhere)
+### Option B: Python Direct
 
-Install globally to use simple commands from any directory:
+If you prefer running python directly:
 
 ```bash
-./install.sh
-```
+# Activate virtual environment
+source .venv/bin/activate
 
-Then run from anywhere:
-```bash
-create-github-oauth
-create-google-oauth
+# Run module
+python -m src.oauth_automator
 ```
 
 ### Update
 
-To update to the latest version, pull the changes and run install again:
+To update to the latest version:
 
 ```bash
 git pull
-./install.sh
+./setup.sh  # Re-verifies dependencies
 ```
 
 ---

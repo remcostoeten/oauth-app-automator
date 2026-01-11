@@ -111,7 +111,17 @@ class BrowserManager:
         return self.context.pages[0] if self.context.pages else self.context.new_page()
 
     def close(self):
-        if self.context:
-            self.context.close()
-        if self.playwright:
-            self.playwright.stop()
+        try:
+            if self.context:
+                try:
+                    self.context.close()
+                except (RuntimeError, Exception):
+                    # Ignore errors if event loop is already closed or context is invalid
+                    pass
+            if self.playwright:
+                try:
+                    self.playwright.stop()
+                except (RuntimeError, Exception):
+                    pass
+        except:
+             pass

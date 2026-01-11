@@ -1,12 +1,17 @@
-import os
 import json
-import logging
+import os
 from datetime import datetime
 from pathlib import Path
-from cryptography.fernet import Fernet
-from typing import List, Dict, Optional
+from typing import List, Dict
 
-logger = logging.getLogger("AuditLogger")
+try:
+    from cryptography.fernet import Fernet
+except ImportError:
+    Fernet = None
+
+from ..core import setup_logger
+
+logger = setup_logger("oauth_automator.github.audit")
 
 class AuditLogger:
     """
@@ -15,6 +20,10 @@ class AuditLogger:
     """
     
     def __init__(self, base_dir: Path = None):
+        if Fernet is None:
+            logger.warning("Cryptography not installed. Audit logging disabled.")
+            return
+
         if base_dir is None:
             # Default to ~/.oauth-automator
             self.base_dir = Path.home() / ".oauth-automator"
@@ -33,13 +42,11 @@ class AuditLogger:
     def _initialize_storage(self):
         """Ensure directories and keys exist."""
         try:
-            # Create directories with restricted permissions
             if not self.base_dir.exists():
                 self.base_dir.mkdir(parents=True, mode=0o700)
             if not self.github_dir.exists():
                 self.github_dir.mkdir(parents=True, mode=0o700)
                 
-            # Load or generate key
             if self.key_file.exists():
                 self.key = self.key_file.read_bytes()
             else:
@@ -52,13 +59,17 @@ class AuditLogger:
             
         except Exception as e:
             logger.error(f"Failed to initialize secure logging storage: {e}")
-            raise
-
+            # Don't crash app if logging fails
+            self.fernet = None
+ 
     def log_credential(self, app_name: str, client_id: str, client_secret: str, 
                       homepage: str, env_type: str = "PROD"):
         """
         Encrypt and append a credential entry to the log.
         """
+        if not self.fernet:
+            return
+
         entry = {
             "timestamp": datetime.utcnow().isoformat(),
             "app_name": app_name,
@@ -88,7 +99,7 @@ class AuditLogger:
         """
         Decrypt and return the list of logged credentials.
         """
-        if not self.log_file.exists():
+        if not self.fernet or not self.log_file.exists():
             return []
             
         try:

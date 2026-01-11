@@ -26,7 +26,15 @@ except ImportError:
 
 def get_current_version() -> str:
     try:
-        pyproject_path = Path(__file__).parent / "pyproject.toml"
+        # Adjusted path since this file is now in src/oauth_automator/core/
+        # Root is 3 directories up from core (core -> oauth_automator -> src -> root)
+        try:
+            # Try to resolve from root
+            pyproject_path = Path(__file__).parents[3] / "pyproject.toml"
+        except IndexError:
+             # Fallback if path structure is not as expected
+             pyproject_path = Path(__file__).parent / "pyproject.toml"
+
         if not pyproject_path.exists():
             return "0.0.0"
             
