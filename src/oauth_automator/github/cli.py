@@ -1,6 +1,7 @@
 import sys
 
 from ..utils import prompt, prompt_yes_no, select_env_file, write_credentials_to_env
+from ..utils.clipboard import copy_to_clipboard
 from ..core import setup_logger
 from .config import OAuthConfig, OAuthCredentials
 from .automator import GitHubAutomator
@@ -10,44 +11,94 @@ logger = setup_logger("oauth_automator.github.cli")
 
 def interactive_create():
     logger.info("🚀 Starting interactive GitHub OAuth App creation...")
-    
+
     try:
         app_name = prompt("Enter App Name", "My App")
-        homepage = prompt("Enter Homepage URL", "http://localhost:3000")
-        callback = prompt("Enter Callback URL", "http://localhost:3000/api/auth/callback/github")
-        
+        port = prompt("Enter local development port", "3000")
+        homepage = f"http://localhost:{port}"
+        callback = f"http://localhost:{port}/api/auth/callback/github"
+        logger.info(f"📍 Homepage URL: {homepage}")
+        logger.info(f"🔗 Callback URL: {callback}")
+
+        # Ask about production app
+        create_prod = prompt_yes_no("Also create production OAuth app?", default=False)
+        prod_url = None
+        if create_prod:
+            prod_url = prompt("Enter production URL (e.g., https://myapp.com)")
+            # Strip trailing slash if present
+            prod_url = prod_url.rstrip("/")
+            prod_homepage = prod_url
+            prod_callback = f"{prod_url}/api/auth/callback/github"
+            logger.info(f"🌐 Production Homepage: {prod_homepage}")
+            logger.info(f"🔗 Production Callback: {prod_callback}")
+
         env_file = select_env_file()
-        
+
         config = OAuthConfig(
             name=app_name,
             homepage_url=homepage,
             callback_url=callback
         )
+
+        prod_config = None
+        if create_prod and prod_url:
+            prod_config = OAuthConfig(
+                name=f"{app_name} (Production)",
+                homepage_url=prod_homepage,
+                callback_url=prod_callback
+            )
     except KeyboardInterrupt:
         logger.warning("\n⚠️ Operation cancelled by user.")
         return
-    
+
     from ..core.browser import BrowserManager
     browser_manager = BrowserManager(headless=False)
-    
+
+    all_credentials = {}
+
     try:
         page = browser_manager.start()
         automator = GitHubAutomator(page)
-        
+
         automator.ensure_logged_in()
+
+        # Create local dev app
         credentials = automator.create_oauth_app(config)
-        
         logger.info(f"✅ App '{credentials.app_name}' created successfully!")
         logger.info(f"🔑 Client ID: {credentials.client_id}")
-        
-        if write_credentials_to_env(
-            credentials={
-                "GITHUB_CLIENT_ID": credentials.client_id,
-                "GITHUB_CLIENT_SECRET": credentials.client_secret
-            },
-            env_file=env_file
-        ):
+
+        all_credentials["GITHUB_CLIENT_ID"] = credentials.client_id
+        all_credentials["GITHUB_CLIENT_SECRET"] = credentials.client_secret
+
+        # Create production app if requested
+        prod_credentials = None
+        if prod_config:
+            prod_credentials = automator.create_oauth_app(prod_config)
+            logger.info(f"✅ Production app '{prod_credentials.app_name}' created successfully!")
+            logger.info(f"🔑 Production Client ID: {prod_credentials.client_id}")
+
+            all_credentials["PROD_GITHUB_CLIENT_ID"] = prod_credentials.client_id
+            all_credentials["PROD_GITHUB_CLIENT_SECRET"] = prod_credentials.client_secret
+
+        # Write all credentials to env file
+        if write_credentials_to_env(credentials=all_credentials, env_file=env_file):
             logger.info(f"📝 Credentials saved to {env_file}")
+
+        # Output credentials to CLI
+        print("\n" + "=" * 50)
+        print("\033[1m📋 Your OAuth Credentials:\033[0m")
+        print("=" * 50)
+        clipboard_text = ""
+        for key, value in all_credentials.items():
+            print(f"{key}={value}")
+            clipboard_text += f"{key}={value}\n"
+        print("=" * 50)
+
+        # Copy to clipboard
+        if copy_to_clipboard(clipboard_text.strip()):
+            logger.info("📋 Credentials copied to clipboard!")
+        else:
+            logger.warning("⚠️ Could not copy to clipboard")
 
         # Secure Audit Logging
         import os
@@ -60,8 +111,15 @@ def interactive_create():
                 client_secret=credentials.client_secret,
                 homepage=config.homepage_url
             )
+            if prod_credentials:
+                audit.log_credential(
+                    app_name=prod_credentials.app_name,
+                    client_id=prod_credentials.client_id,
+                    client_secret=prod_credentials.client_secret,
+                    homepage=prod_config.homepage_url
+                )
             logger.info("🔒 Credentials securely logged locally.")
-            
+
     except KeyboardInterrupt:
         logger.warning("\n⚠️ Operation cancelled by user.")
         return
