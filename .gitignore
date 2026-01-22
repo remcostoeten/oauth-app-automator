@@ -3,6 +3,7 @@
 .env.local
 .env.*.local
 .env.backup
+.env.production
 
 # Browser Session (CRITICAL: Do not commit!)
 auth_session/

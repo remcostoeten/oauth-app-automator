@@ -6,7 +6,7 @@ import tempfile
 import shutil
 
 # Import the module to test
-import version_check
+from oauth_automator.core import version as version
 
 class TestVersionCheck(unittest.TestCase):
     def setUp(self):
@@ -23,10 +23,10 @@ class TestVersionCheck(unittest.TestCase):
 
     def test_parse_version(self):
         """Test version string parsing into tuples"""
-        self.assertEqual(version_check.parse_version("1.5.0"), (1, 5, 0))
-        self.assertEqual(version_check.parse_version("v2.0.1"), (2, 0, 1))
-        self.assertEqual(version_check.parse_version("0.9"), (0, 9))
-        self.assertEqual(version_check.parse_version("invalid"), ())
+        self.assertEqual(version.parse_version("1.5.0"), (1, 5, 0))
+        self.assertEqual(version.parse_version("v2.0.1"), (2, 0, 1))
+        self.assertEqual(version.parse_version("0.9"), (0, 9))
+        self.assertEqual(version.parse_version("invalid"), ())
 
     def test_get_current_version(self):
         """Test reading version from pyproject.toml using temp file"""
@@ -41,14 +41,14 @@ class TestVersionCheck(unittest.TestCase):
         # Test the parser directly
         try:
              # Depending on import availability in version_check
-             if hasattr(version_check, 'parse_toml_version'):
-                 version = version_check.parse_toml_version(self.pyproject_path)
-                 self.assertEqual(version, "1.2.3")
+             if hasattr(version, "parse_toml_version"):
+                 current = version.parse_toml_version(self.pyproject_path)
+                 self.assertEqual(current, "1.2.3")
         except:
             pass
 
         # We can also test the full function by patching Path locally
-        with patch("version_check.Path") as mock_path_cls:
+        with patch("oauth_automator.core.version.Path") as mock_path_cls:
             mock_path_instance = MagicMock()
             mock_path_cls.return_value = mock_path_instance
             # When .parent is accessed
@@ -58,8 +58,8 @@ class TestVersionCheck(unittest.TestCase):
             # Let's trust the integration test we did manually and the parser logic.
             pass
 
-    @patch("version_check.get_current_version")
-    @patch("version_check.fetch_latest_version")
+    @patch("oauth_automator.core.version.get_current_version")
+    @patch("oauth_automator.core.version.fetch_latest_version")
     def test_update_available_scenarios(self, mock_fetch, mock_current):
         """Test various update scenarios"""
         
@@ -78,13 +78,13 @@ class TestVersionCheck(unittest.TestCase):
                 # But since it's imported, we mock the return value of is_update_available logic mainly
                 
                 # Let's verify the logic directly by calling our parse_version helper which is pure
-                curr_tuple = version_check.parse_version(current)
-                lat_tuple = version_check.parse_version(latest)
+                curr_tuple = version.parse_version(current)
+                lat_tuple = version.parse_version(latest)
                 
                 is_update = lat_tuple > curr_tuple
                 self.assertEqual(is_update, expect_update, f"Failed for {current} -> {latest}")
 
-    @patch("version_check.subprocess.run")
+    @patch("oauth_automator.core.version.subprocess.run")
     def test_auto_downgrade_sim(self, mock_run):
         """Simulate the auto-downgrade test case user mentioned"""
         # User asked "verify which auto downgrades to test". 

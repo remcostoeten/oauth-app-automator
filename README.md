@@ -50,7 +50,10 @@ If you prefer running python directly:
 source .venv/bin/activate
 
 # Run module
-python -m src.oauth_automator
+PYTHONPATH=./src python -m oauth_automator
+
+# Or use the installed CLI if available
+oauth-automator
 ```
 
 ### Update

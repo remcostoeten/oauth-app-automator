@@ -13,4 +13,4 @@ else
 fi
 
 # Run the unified automator with 'google' as the first command
-exec "$PYTHON_CMD" -m src.oauth_automator google "$@"
+exec PYTHONPATH="${SCRIPT_DIR}/src" "$PYTHON_CMD" -m oauth_automator google "$@"

@@ -2,23 +2,6 @@ import sys
 import tty
 import termios
 import webbrowser
-from typing import List, Optional, Callable
-
-from rich.console import Console
-from rich.table import Table
-from rich.live import Live
-from rich.panel import Panel
-from rich.text import Text
-
-from ..core import setup_logger
-
-logger = setup_logger("oauth_automator.google.manager")
-
-
-import sys
-import tty
-import termios
-import webbrowser
 import time
 from typing import List, Optional, Callable
 
