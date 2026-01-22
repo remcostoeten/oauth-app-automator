@@ -1,6 +1,8 @@
 from dataclasses import dataclass
+import re
 import urllib.request
 import urllib.error
+import urllib.parse
 
 from ..core import setup_logger
 
@@ -44,12 +46,17 @@ GITHUB_CLIENT_SECRET="{self.client_secret}"
             logger.warning(f"   ⚠️  Client ID has unexpected prefix: {self.client_id[:6]}")
             return False
 
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", self.client_id):
+            logger.warning("   ❌ Client ID contains invalid characters")
+            return False
+
         if len(self.client_secret) < 30:
             logger.warning(f"   ⚠️  Client secret seems too short: {len(self.client_secret)} chars")
             return False
 
         try:
-            test_url = f"https://github.com/login/oauth/authorize?client_id={self.client_id}&response_type=code"
+            encoded_id = urllib.parse.quote_plus(self.client_id)
+            test_url = f"https://github.com/login/oauth/authorize?client_id={encoded_id}&response_type=code"
             req = urllib.request.Request(test_url, method="HEAD")
             req.add_header("User-Agent", "Mozilla/5.0")
 

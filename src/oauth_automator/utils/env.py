@@ -48,9 +48,11 @@ def write_credentials_to_env(
             
             if full_key in existing_keys:
                 counter = 1
-                while f"GENERATED_{counter}_{full_key}" in existing_keys:
+                candidate = f"GENERATED_{counter}_{full_key}"
+                while candidate in existing_keys:
                     counter += 1
-                full_key = f"GENERATED_{counter}_{full_key}" if counter > 1 else f"GENERATED_{full_key}"
+                    candidate = f"GENERATED_{counter}_{full_key}"
+                full_key = candidate
             
             new_lines.append(f'{full_key}="{value}"')
         

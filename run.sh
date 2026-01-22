@@ -5,7 +5,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Autos-detect venv
+# Auto-detect venv
 if [ -d "${SCRIPT_DIR}/.venv" ]; then
     PYTHON_CMD="${SCRIPT_DIR}/.venv/bin/python3"
 else
@@ -14,4 +14,4 @@ fi
 
 # Forward all arguments to the python module
 # If no arguments are provided, it launches the interactive menu
-exec "$PYTHON_CMD" -m src.oauth_automator "$@"
+exec PYTHONPATH="${SCRIPT_DIR}/src" "$PYTHON_CMD" -m oauth_automator "$@"

@@ -114,6 +114,12 @@ def print_update_notice():
 def is_git_repo(path: Path) -> bool:
     return (path / ".git").exists() and (path / ".git").is_dir()
 
+def find_repo_root(path: Path) -> Path:
+    for candidate in [path] + list(path.parents):
+        if is_git_repo(candidate):
+            return candidate
+    return path
+
 def check_and_update() -> bool:
     update_available, latest_version = is_update_available()
     
@@ -123,7 +129,7 @@ def check_and_update() -> bool:
     
     print(f"\n\033[33m⚡ Update available: v{CURRENT_VERSION} → v{latest_version}\033[0m\n")
     
-    repo_dir = Path(__file__).parent.resolve()
+    repo_dir = find_repo_root(Path(__file__).resolve())
     is_git = is_git_repo(repo_dir)
     
     # If not a git repo, we might be installed in site-packages
