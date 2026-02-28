@@ -28,6 +28,7 @@ _It will verify Python, install dependencies (using `uv` for speed), and help yo
 ```bash
 ./run.sh
 ```
+_`run.sh` now bootstraps `.venv` automatically and installs/updates dependencies when `requirements.txt` changes._
 
 **2. Direct Commands**  
 ```bash
@@ -60,7 +61,7 @@ To update to the latest version:
 
 ```bash
 git pull
-./setup.sh  # Re-verifies dependencies
+./run.sh    # Auto-syncs virtualenv + dependencies if needed
 ```
 
 ---

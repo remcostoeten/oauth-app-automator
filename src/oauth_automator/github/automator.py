@@ -1,10 +1,12 @@
 import time
 import re
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import List, Optional
 from playwright.sync_api import Page
+import requests
 
 from ..core import setup_logger
 from .selectors import GitHubSelectors
@@ -212,24 +214,98 @@ class GitHubAutomator:
     def inspect_all_oauth_apps_usage(self, apps: List[dict]) -> List[dict]:
         inspected = []
         total = len(apps)
-        for idx, app in enumerate(apps, 1):
-            logger.info(f"   Inspecting app {idx}/{total}: {app.get('name', 'Unknown')}")
+        if total == 0:
+            return inspected
+
+        # Fast path: inspect pages concurrently via authenticated HTTP requests.
+        # If this fails for specific apps (login/sudo/rate-limits), fall back to browser-based scraping.
+        max_workers = min(12, max(2, total))
+        logger.info(f"   Parallel inspection enabled ({max_workers} workers).")
+        cookie_snapshot = self._extract_github_cookies()
+        indexed_results: List[Optional[dict]] = [None] * total
+        failed_indexes = []
+        completed = 0
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_idx = {
+                executor.submit(self._inspect_oauth_app_usage_via_http, apps[idx], cookie_snapshot): idx
+                for idx in range(total)
+            }
+            for future in as_completed(future_to_idx):
+                idx = future_to_idx[future]
+                app = apps[idx]
+                completed += 1
+                logger.info(f"   Inspecting app {completed}/{total}: {app.get('name', 'Unknown')}")
+                try:
+                    indexed_results[idx] = future.result()
+                except Exception as e:
+                    logger.warning(f"   Fast inspect failed for '{app.get('name', 'Unknown')}': {e}")
+                    failed_indexes.append(idx)
+
+        # Fallback: use Playwright navigation for apps that could not be inspected via HTTP.
+        for idx in failed_indexes:
+            app = apps[idx]
             try:
-                inspected.append(self.inspect_oauth_app_usage(app))
+                indexed_results[idx] = self.inspect_oauth_app_usage(app)
             except Exception as e:
                 logger.warning(f"   Could not inspect '{app.get('name', 'Unknown')}': {e}")
-                inspected.append(
-                    {
-                        "id": app.get("id", ""),
-                        "name": app.get("name", "Unknown"),
-                        "url": app.get("url", ""),
-                        "created_at": "unknown",
-                        "authorized_users": None,
-                        "usage_known": False,
-                        "is_unused": None,
-                    }
+                indexed_results[idx] = {
+                    "id": app.get("id", ""),
+                    "name": app.get("name", "Unknown"),
+                    "url": app.get("url", ""),
+                    "created_at": "unknown",
+                    "authorized_users": None,
+                    "usage_known": False,
+                    "is_unused": None,
+                }
+
+        return [item for item in indexed_results if item is not None]
+
+    def _extract_github_cookies(self) -> List[dict]:
+        try:
+            return self.page.context.cookies("https://github.com")
+        except Exception:
+            return self.page.context.cookies()
+
+    def _inspect_oauth_app_usage_via_http(self, app: dict, cookies: List[dict]) -> dict:
+        app_name = app.get("name", "Unknown")
+        app_url = app.get("url", "")
+        app_id = app.get("id", self._extract_app_id_from_url(app_url))
+
+        session = requests.Session()
+        session.headers.update(
+            {
+                "User-Agent": (
+                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
                 )
-        return inspected
+            }
+        )
+        for cookie in cookies:
+            name = cookie.get("name")
+            value = cookie.get("value")
+            domain = cookie.get("domain")
+            if name and value and domain:
+                session.cookies.set(name, value, domain=domain, path=cookie.get("path", "/"))
+
+        response = session.get(app_url, timeout=20, allow_redirects=True)
+        final_url = response.url or app_url
+        if "/login" in final_url or "sessions/sudo" in final_url or response.status_code >= 400:
+            raise RuntimeError(f"auth-required-or-http-{response.status_code}")
+
+        body_text = response.text
+        authorized_users = self._extract_authorized_users(body_text)
+        created_at = self._extract_created_date(body_text)
+
+        return {
+            "id": app_id,
+            "name": app_name,
+            "url": app_url,
+            "created_at": created_at or "unknown",
+            "authorized_users": authorized_users,
+            "usage_known": authorized_users is not None,
+            "is_unused": authorized_users == 0 if authorized_users is not None else None,
+        }
 
     def _extract_authorized_users(self, text: str) -> Optional[int]:
         lowered = text.lower()
