@@ -3,6 +3,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.1] - 2026-02-28
+
+### Improvements
+- **Faster OAuth App Usage Inspection**:
+    - Added parallel GitHub OAuth app usage inspection using authenticated HTTP requests for significantly faster list scans.
+    - Added automatic fallback to Playwright-based inspection for apps that require re-auth/sudo or fail HTTP inspection.
+- **Smarter `run.sh` Bootstrap**:
+    - `run.sh` now ensures `.venv` exists automatically (prefers `uv venv`, falls back to `python -m venv`).
+    - Added dependency hash tracking so installs only run when `requirements.txt` changes.
+    - Uses `uv pip` when available, with automatic fallback to standard `pip`.
+
 ## [1.4.0] - 2026-01-07
 
 ### New Features

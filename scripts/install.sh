@@ -22,9 +22,8 @@ if ! command -v uv &> /dev/null; then
     exit 1
 fi
 
-echo -e "  ${CYAN}This will install or update the following commands globally:${NC}"
-echo -e "    • ${GREEN}create-github-oauth${NC} - Create GitHub OAuth apps"
-echo -e "    • ${GREEN}create-google-oauth${NC} - Create Google OAuth apps"
+echo -e "  ${CYAN}This will install or update the following command globally:${NC}"
+echo -e "    • ${GREEN}oauth-automator${NC} - Unified OAuth automation tool"
 echo ""
 echo -e "  ${YELLOW}Installation location:${NC} ~/.local/bin/"
 echo ""
@@ -48,11 +47,18 @@ echo -e "${GREEN}  ✓ Installation complete!${NC}"
 echo -e "${GREEN}════════════════════════════════════════════════════════════${NC}"
 echo ""
 echo -e "  You can now run from anywhere:"
-echo -e "    ${CYAN}create-github-oauth${NC}"
-echo -e "    ${CYAN}create-google-oauth${NC}"
+echo -e "    ${CYAN}oauth-automator${NC}"
 echo ""
-echo -e "  ${YELLOW}Note:${NC} Make sure ${CYAN}~/.local/bin${NC} is in your PATH"
+
+# macOS specific advice
+if [[ "$(uname)" == "Darwin" ]]; then
+    echo -e "  ${YELLOW}macOS Note:${NC} If not in PATH, add this to ~/.zprofile or ~/.zshrc:"
+    echo -e "    ${CYAN}export PATH=\"\$HOME/.local/bin:\$PATH\"${NC}"
+else
+    echo -e "  ${YELLOW}Note:${NC} Make sure ${CYAN}~/.local/bin${NC} is in your PATH"
+fi
+
 echo ""
 echo -e "  To uninstall:"
-echo -e "    ${CYAN}uv tool uninstall github-oauth-automator${NC}"
+echo -e "    ${CYAN}uv tool uninstall oauth-automator${NC}"
 echo ""

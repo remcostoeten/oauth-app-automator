@@ -1,23 +1,55 @@
 [project]
-name = "github-oauth-automator"
-version = "1.4.0"
-description = "Automate GitHub OAuth app creation via browser automation"
-authors = [{name = "Remco Stoeten"}]
+name = "oauth-automator"
+version = "1.5.0"
+description = "Automate OAuth app creation for GitHub & Google"
+authors = [{name = "Remco Stoeten", email = "remco@example.com"}]
 readme = "README.md"
-requires-python = ">=3.8"
-dependencies = [
+requires-python = ">=3.9"
+license = {text = "MIT"}
+keywords = ["oauth", "github", "google", "automation", "playwright"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Build Tools",
+]
     "playwright>=1.40.0",
     "python-dotenv>=1.0.0",
+    "cryptography>=41.0.0",
+    "rich>=13.0.0",
 ]
-license = {text = "MIT"}
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "ruff>=0.1.0",
+]
 
 [project.scripts]
-create-github-oauth = "github_oauth_automator:main"
-create-google-oauth = "google_oauth_automator:main"
+oauth-automator = "oauth_automator.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/remcostoeten/automatic-oauth-github-creator"
+Repository = "https://github.com/remcostoeten/automatic-oauth-github-creator"
+Issues = "https://github.com/remcostoeten/automatic-oauth-github-creator/issues"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["."]
+packages = ["src/oauth_automator"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
