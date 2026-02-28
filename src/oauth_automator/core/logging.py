@@ -30,6 +30,7 @@ class LogFormatter(logging.Formatter):
 def setup_logger(name: str = "oauth_automator") -> logging.Logger:
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO)
+    logger.propagate = False
     
     if not logger.handlers:
         ch = logging.StreamHandler(sys.stdout)

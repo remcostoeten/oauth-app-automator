@@ -34,6 +34,7 @@ _It will verify Python, install dependencies (using `uv` for speed), and help yo
 # GitHub
 ./run.sh github create
 ./run.sh github list
+./run.sh github grab --name "My App" --format env-lines
 
 # Google
 ./run.sh google create
@@ -65,6 +66,9 @@ git pull
 ---
 
 Both options will prompt you for configuration values and automatically save credentials to `.env`.
+After creation, you can also choose to copy local credentials to your clipboard in either:
+- `client_id,client_secret`
+- `GITHUB_CLIENT_ID=...` and `GITHUB_CLIENT_SECRET=...` (multi-line env format)
 
 ## Features
 
@@ -73,6 +77,7 @@ Both options will prompt you for configuration values and automatically save cre
   - Create DEV + PROD apps at once - Generate credentials for both environments simultaneously
   - Automatic client secret generation
   - Allow deletion of any existing app through the GitHub API
+  - Grab credentials by app ID/name or interactive selection and copy directly to clipboard
 
 - **Google OAuth:**
   - Automatic OAuth 2.0 client ID creation
@@ -83,6 +88,15 @@ Both options will prompt you for configuration values and automatically save cre
 - **Shared Features:**
   - **Flexible credential output:**
     - Copy to clipboard (Mac/Linux)
+    - `github create` clipboard formats:
+      - `client_id,client_secret` (single line)
+      - `GITHUB_CLIENT_ID=...` + `GITHUB_CLIENT_SECRET=...` (multi-line)
+    - `github grab` output formats:
+      - `public` (client id only)
+      - `secret` (client secret only)
+      - `both-comma` (`client_id,client_secret`)
+      - `both-lines` (id and secret on separate lines)
+      - `env-lines` (`GIT_GITHUB_CLIENT_ID=...` and `GIT_GITHUB_CLIENT_SECRET=...`)
     - Write to `.env`, `.env.local`, or `.env.production`
   - **Smart duplicate handling** - Never overwrites existing keys, uses `GENERATED_` prefixes  
 

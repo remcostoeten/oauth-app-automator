@@ -48,11 +48,11 @@ class GoogleAutomator:
 
         if project_id:
             try:
-                search_input = self.page.wait_for_selector(GoogleSelectors.PROJECT_SEARCH_INPUT, state="visible", timeout=5000)
+                search_input = self.page.wait_for_selector(GoogleSelectors.PROJECT_SEARCH_INPUT, state="visible", timeout=8000)
                 if search_input:
                     search_input.fill(project_id)
                     time.sleep(1)
-                    self.page.wait_for_selector(GoogleSelectors.PROJECT_ITEM, state="visible", timeout=5000)
+                    self.page.wait_for_selector(GoogleSelectors.PROJECT_ITEM, state="visible", timeout=8000)
                     project_items = self.page.query_selector_all(GoogleSelectors.PROJECT_ITEM)
                     for item in project_items:
                         text = item.inner_text()
@@ -106,17 +106,19 @@ class GoogleAutomator:
     def create_oauth_client(self, config: GoogleOAuthConfig) -> GoogleOAuthCredentials:
         project_id = self._get_current_project_id()
         logger.info(f"📝 Creating OAuth client: {config.name}")
-        
+
         self.page.goto(f"{GoogleSelectors.BASE_URL}/apis/credentials")
-        
+        self.page.wait_for_load_state("networkidle")
+
         create_btn = self.page.wait_for_selector(GoogleSelectors.CREATE_CREDENTIALS_BUTTON, state="visible", timeout=15000)
         if create_btn: create_btn.click()
-        
-        oauth_option = self.page.wait_for_selector(GoogleSelectors.OAUTH_CLIENT_ID_OPTION, state="visible", timeout=5000)
+
+        oauth_option = self.page.wait_for_selector(GoogleSelectors.OAUTH_CLIENT_ID_OPTION, state="visible", timeout=8000)
         if oauth_option: oauth_option.click()
 
         time.sleep(2)
-        
+        self.page.wait_for_load_state("domcontentloaded")
+
         # Select app type
         dropdown = self.page.query_selector(GoogleSelectors.APP_TYPE_DROPDOWN)
         if dropdown: dropdown.click()
@@ -124,17 +126,25 @@ class GoogleAutomator:
         option = self.page.query_selector(GoogleSelectors.APP_TYPE_WEB)
         if option: option.click()
 
-        name_input = self.page.wait_for_selector(GoogleSelectors.NAME_INPUT, state="visible", timeout=5000)
-        if name_input: name_input.fill(config.name)
+        time.sleep(1)
+        self.page.wait_for_load_state("domcontentloaded")
+
+        name_input = self.page.wait_for_selector(GoogleSelectors.NAME_INPUT, state="visible", timeout=10000)
+        if name_input:
+            name_input.scroll_into_view_if_needed()
+            name_input.fill(config.name)
+            logger.info(f"   ✅ Filled name: {config.name}")
+        else:
+            logger.error("   ❌ Could not find name input field")
 
         # Add origins/redirects would go here...
-        
-        create_submit = self.page.wait_for_selector(GoogleSelectors.CREATE_BUTTON, state="visible", timeout=5000)
+
+        create_submit = self.page.wait_for_selector(GoogleSelectors.CREATE_BUTTON, state="visible", timeout=10000)
         if create_submit: create_submit.click()
-        
+
         logger.info("   Submitting...")
         time.sleep(3)
-        
+
         client_id = self._extract_client_id()
         client_secret = self._extract_client_secret()
 

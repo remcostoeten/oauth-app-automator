@@ -79,8 +79,34 @@ def main():
     github_parser = subparsers.add_parser("github", help="GitHub OAuth commands")
     github_sub = github_parser.add_subparsers(dest="command")
     github_sub.add_parser("create", help="Create new OAuth app")
-    github_sub.add_parser("list", help="List OAuth apps")
+    github_list = github_sub.add_parser("list", help="List OAuth apps")
+    github_list.add_argument("--refresh", action="store_true", help="Force full rescan (ignore cache)")
     github_sub.add_parser("delete", help="Delete OAuth app")
+    github_sub.add_parser("manage", help="Manage OAuth apps interactively")
+    github_cleanup = github_sub.add_parser("cleanup", help="Inspect app usage and delete unused OAuth apps")
+    github_cleanup.add_argument("--refresh", action="store_true", help="Force full rescan (ignore cache)")
+    github_grab = github_sub.add_parser("grab", help="Grab OAuth credentials and copy to clipboard")
+    github_grab.add_argument("--id", help="OAuth app id")
+    github_grab.add_argument("--name", help="OAuth app name (exact or partial)")
+    github_grab.add_argument(
+        "--format",
+        choices=["public", "secret", "both-comma", "both-lines", "env-lines"],
+        default="env-lines",
+        help="Clipboard output format",
+    )
+    github_grab.add_argument(
+        "--prefix",
+        default="GIT_",
+        help="Prefix for env-lines format (default: GIT_)",
+    )
+    github_grab.add_argument("--refresh", action="store_true", help="Force full rescan when selecting by name/list")
+    github_grab.set_defaults(allow_public_fallback=True)
+    github_grab.add_argument(
+        "--no-public-fallback",
+        dest="allow_public_fallback",
+        action="store_false",
+        help="Fail if secret is unavailable (do not fallback to public client ID)",
+    )
     
     google_parser = subparsers.add_parser("google", help="Google OAuth commands")
     google_sub = google_parser.add_subparsers(dest="command")

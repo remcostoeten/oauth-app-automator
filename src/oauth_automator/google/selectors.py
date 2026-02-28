@@ -28,7 +28,7 @@ class GoogleSelectors:
     APP_TYPE_TVS = "[value='TV_LIMITED_INPUT'], mat-option:has-text('TVs'), [role='option']:has-text('TVs')"
     APP_TYPE_UWP = "[value='UWP'], mat-option:has-text('Universal Windows'), [role='option']:has-text('Universal Windows')"
     
-    NAME_INPUT = "input[aria-label='Name'], input[formcontrolname='name'], input[name='name']"
+    NAME_INPUT = "input[aria-label='Name'], input[formcontrolname='name'], input[name='name'], input[placeholder*='name'], .name-field input, mat-form-field input[type='text']:first-of-type"
     
     ADD_URI_BUTTON = "button:has-text('Add URI'), button:has-text('+ Add URI')"
     ORIGIN_INPUT = "input[placeholder*='example.com'], input[aria-label*='JavaScript origin']"
