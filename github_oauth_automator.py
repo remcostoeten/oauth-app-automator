@@ -43,6 +43,7 @@ import platform
 import subprocess
 import re
 from urllib.parse import urlparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Try to import AuditLogger, but don't fail if dependencies missing (e.g. during simple unit tests)
 try:
@@ -190,9 +191,6 @@ class GitHubSelectors:
     ]
     LAST_USED_NEVER = [
         'text="Never"',
-    ]
-    TOKEN_AGE_SELECTORS = [
-        'text*="token"',
     ]
 
 
@@ -430,6 +428,7 @@ class BrowserManager:
             logger.warning(
                 "Playwright CLI not found. Installing it globally with npm..."
             )
+            # Safe: npm_cli comes from shutil.which() and we use list form (no shell=True)
             subprocess.run(
                 [npm_cli, "i", "-g", "playwright"],
                 check=True,
@@ -445,6 +444,7 @@ class BrowserManager:
             )
 
         logger.warning("Playwright Chromium is missing. Installing it now...")
+        # Safe: playwright_cli comes from shutil.which() and we use list form (no shell=True)
         subprocess.run([playwright_cli, "install", "chromium"], check=True)
         logger.info("Playwright Chromium installed successfully")
 
@@ -815,11 +815,13 @@ class GitHubAutomator:
                 logger.warning("   Navigation response was empty")
                 return result
 
-            time.sleep(1.5)
+            try:
+                self.page.wait_for_selector(
+                    ", ".join(GitHubSelectors.LAST_USED_SELECTORS), timeout=10000
+                )
+            except Exception:
+                pass
             self.handle_sudo_mode()
-            time.sleep(0.5)
-
-            page_text = self.page.inner_text("body")
 
             last_used_text = None
             for selector in GitHubSelectors.LAST_USED_SELECTORS:
@@ -842,11 +844,6 @@ class GitHubAutomator:
                     hours = self._parse_last_used(last_used_text)
                     if hours is not None:
                         result["age_hours"] = hours
-                        if hours > 1:
-                            result["is_unused"] = True
-                            logger.info(
-                                f"   → Token unused for {hours}h (> 1h threshold)"
-                            )
 
             token_generated = None
             for pattern in ["token", "created", "generated"]:
@@ -1190,11 +1187,107 @@ def prompt_yes_no(text: str, default: bool = True) -> bool:
     return response in ["y", "yes", "true", "1"]
 
 
+def _getch() -> str:
+    """Cross-platform get single character input."""
+    try:
+        import termios
+        import tty
+
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setraw(sys.stdin.fileno())
+            ch = sys.stdin.read(1)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        return ch
+    except Exception:
+        return ""
+
+
+def _read_arrow_key() -> str:
+    try:
+        ch = _getch()
+        if ch == "\x1b":
+            next_ch = _getch()
+            if next_ch == "[":
+                return _getch()
+        return ""
+    except Exception:
+        return ""
+
+
 def prompt_choice(
     text: str, valid_choices: List[str], default: Optional[str] = None
 ) -> str:
-    """Prompt until the user enters one of the allowed choices."""
-    valid_set = set(valid_choices)
+    """Prompt until the user enters one of the allowed choices. Supports arrow keys + Enter."""
+    if not valid_choices:
+        return default or ""
+
+    try:
+        if sys.stdin.isatty() and sys.stdout.isatty():
+            return _prompt_choice_interactive(text, valid_choices, default)
+    except Exception:
+        pass
+
+    return _prompt_choice_fallback(text, valid_choices, default)
+
+
+def _prompt_choice_interactive(
+    text: str, valid_choices: List[str], default: Optional[str] = None
+) -> str:
+    """Interactive prompt with arrow key support."""
+    current = 0
+    if default:
+        try:
+            default_idx = valid_choices.index(default)
+            current = default_idx
+        except ValueError:
+            pass
+
+    choice_labels = [f"{i + 1}. {choice}" for i, choice in enumerate(valid_choices)]
+
+    print(f"\033[94m➤\033[0m {text} \033[90m[↑↓ to navigate, Enter to select]\033[0m")
+
+    def draw_selection():
+        print(f"\r\033[94m➤\033[0m ", end="", flush=True)
+        for i, label in enumerate(choice_labels):
+            if i == current:
+                print(f"\033[92m► {label}\033[0m   ", end="", flush=True)
+            else:
+                print(f"  {label}   ", end="", flush=True)
+
+    draw_selection()
+
+    while True:
+        ch = _getch()
+
+        if ch == "\r" or ch == "\n":
+            print()
+            return valid_choices[current]
+
+        if ch == "\x1b":
+            seq = _read_arrow_key()
+            if seq == "A":
+                current = (current - 1) % len(valid_choices)
+            elif seq == "B":
+                current = (current + 1) % len(valid_choices)
+            print("\r" + " " * 200 + "\r", end="", flush=True)
+            draw_selection()
+
+        if ch.isdigit():
+            idx = int(ch) - 1
+            if 0 <= idx < len(valid_choices):
+                print()
+                return valid_choices[idx]
+
+
+def _prompt_choice_fallback(
+    text: str, valid_choices: List[str], default: Optional[str] = None
+) -> str:
+    """Fallback prompt that only accepts text input."""
+    valid_lower_to_canonical = {choice.lower(): choice for choice in valid_choices}
+    valid_lower_set = set(valid_lower_to_canonical.keys())
     while True:
         if default:
             response = input(
@@ -1205,8 +1298,9 @@ def prompt_choice(
         else:
             response = input(f"\033[94m➤\033[0m {text}: ").strip()
 
-        if response in valid_set:
-            return response
+        response_lower = response.lower()
+        if response_lower in valid_lower_set:
+            return valid_lower_to_canonical[response_lower]
 
         print(
             f"\033[91m❌ Invalid choice. Please enter one of: {', '.join(valid_choices)}.\033[0m"
@@ -1241,14 +1335,6 @@ def _build_url_from_base_and_path(base_url: str, path: str) -> str:
     if normalized_path == "/":
         return base_url.rstrip("/")
     return f"{base_url.rstrip('/')}{normalized_path}"
-
-
-def _get_local_base_url(default_homepage: str) -> str:
-    """Return the localhost base URL to use for path-only input mode."""
-    parsed_homepage = urlparse(default_homepage)
-    if parsed_homepage.hostname in {"localhost", "127.0.0.1"}:
-        return f"{parsed_homepage.scheme or 'http'}://{parsed_homepage.netloc}"
-    return "http://localhost:3000"
 
 
 def _default_local_url_mode(default_homepage: str) -> str:
@@ -2310,29 +2396,41 @@ def interactive_auto_remove_unused():
         print(f"\n\033[1mChecking {len(apps)} app(s) for usage...\033[0m\n")
 
         unused_apps = []
+        max_workers = min(10, len(apps))
 
-        for i, app in enumerate(apps, 1):
-            print(f"\033[90m[{i}/{len(apps)}]\033[0m Checking: {app['name']}...")
-            usage_info = automator.check_app_usage(app["url"])
+        def check_single_app(app):
+            page = context.new_page()
+            try:
+                temp_automator = GitHubAutomator(page, password=None)
+                usage_info = temp_automator.check_app_usage(app["url"])
+                return (app, usage_info)
+            finally:
+                page.close()
 
-            if usage_info.get("is_unused"):
-                unused_apps.append(
-                    {
-                        "name": app["name"],
-                        "url": app["url"],
-                        "last_used": usage_info.get("last_used"),
-                        "age_hours": usage_info.get("age_hours"),
-                    }
-                )
-                status = "\033[91m→ UNUSED\033[0m"
-                if usage_info.get("last_used"):
-                    status += f" ({usage_info['last_used']})"
-                print(f"   {status}")
-            else:
-                if usage_info.get("last_used"):
-                    print(f"   \033[92m✓ Used: {usage_info['last_used']}\033[0m")
+        context = page.context
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(check_single_app, app): app for app in apps}
+            for future in as_completed(futures):
+                app, usage_info = future.result()
+                if usage_info.get("is_unused"):
+                    unused_apps.append(
+                        {
+                            "name": app["name"],
+                            "url": app["url"],
+                            "last_used": usage_info.get("last_used"),
+                            "age_hours": usage_info.get("age_hours"),
+                        }
+                    )
+                    status = "\033[91m→ UNUSED\033[0m"
+                    if usage_info.get("last_used"):
+                        status += f" ({usage_info['last_used']})"
+                    print(f"   {status}")
                 else:
-                    print(f"   \033[92m✓ In use\033[0m")
+                    if usage_info.get("last_used"):
+                        print(f"   \033[92m✓ Used: {usage_info['last_used']}\033[0m")
+                    else:
+                        print(f"   \033[92m✓ In use\033[0m")
 
         if not unused_apps:
             print("\n\033[92m✅ No unused apps found!\033[0m")
@@ -2341,7 +2439,7 @@ def interactive_auto_remove_unused():
         print(f"\n\033[91m⚠️  Found {len(unused_apps)} unused app(s):\033[0m\n")
         for app in unused_apps:
             age_info = ""
-            if app.get("age_hours") == float("inf"):
+            if app.get("last_used") is None and app.get("is_unused"):
                 age_info = " (Never used)"
             elif app.get("age_hours"):
                 age_info = f" ({app['age_hours']}h unused)"

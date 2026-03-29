@@ -1,6 +1,5 @@
 {
   "dependencies": {
-    "playwright": "^1.58.2",
-    "remove": "^0.1.5"
+    "playwright": "^1.58.2"
   }
 }

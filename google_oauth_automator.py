@@ -529,7 +529,7 @@ def interactive_create():
     default_app_name = os.getenv("GOOGLE_OAUTH_APP_NAME", "my-google-app")
     default_homepage = os.getenv("OAUTH_BASE_URL", "http://localhost:3000")
     app_name = prompt("Application name", default_app_name)
-    app_type = prompt_choice("Application type", ["web", "desktop"], "web").lower()
+    app_type = prompt_choice("Application type", ["web", "desktop"], "web")
     homepage_url, callback_url = prompt_local_or_custom_urls(
         "google",
         default_homepage,

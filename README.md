@@ -1,17 +1,18 @@
-# OAuth Automator (GitHub + Google)
+# OAuth App Automator
 
-For people who value their time<br>
-<small>I obviously don't, as I've written this tool</small>
+Create GitHub and Google OAuth apps in seconds.
 
-This tool automates the tedious process of creating OAuth applications for both GitHub and Google, since both platforms have deprecated API endpoints for creating new OAuth apps.
+This tool automates the painful manual setup flow for GitHub OAuth apps and Google OAuth clients. It generates client IDs and secrets for you, then copies them to your clipboard or writes them directly to your `.env` files so you can get back to building.
 
-If you’re concerned about security, read how this tool [works](#how-it-works).
+It is built for local development, staging, and production setup without spending half your day clicking through GitHub settings and Google Cloud Console.
+
+If you want to understand the browser automation approach and security model, read [How it works](#how-it-works).
 
 ![Demo](DEMO.gif)
 
 ## Quick Start
 
-### Option A: Local Usage (Recommended for First-Time Users)
+### Option A: Local Usage
 
 **1. Setup (first time only)**  
 Run the interactive setup script to configure dependencies and settings:
@@ -20,35 +21,45 @@ Run the interactive setup script to configure dependencies and settings:
 ./setup.sh
 ```
 
-_It will verify Python, install dependencies (using `uv` for speed), and help you link your existing Brave or Chrome session (optional)._
+_The setup script verifies Python, installs dependencies, and can help you connect an existing Brave or Chrome profile if you want to reuse a logged-in browser session._
 
 **2. Run**
 
-For GitHub OAuth:
+Create a GitHub OAuth app:
 ```bash
 ./run.sh
 ```
 
-For Google OAuth:
+Create a Google OAuth client:
 ```bash
 python google_oauth_automator.py
 ```
 
 ---
 
-### Option B: Global Installation (Use From Anywhere)
+### Option B: Global Installation
 
-Install globally to use simple commands from any directory:
+Install globally with shell aliases:
 
 ```bash
-./install.sh
+./install-cli.sh
 ```
 
 Then run from anywhere:
 ```bash
-create-github-oauth
-create-google-oauth
+create-oauth           # GitHub OAuth (shortcut)
+create-github-oauth   # GitHub OAuth
+create-google-oauth   # Google OAuth
 ```
+
+The installer detects your shell and writes a small sourced snippet instead of relying on a brittle alias setup.
+
+- `bash`: writes `~/.config/oauth-creator/oauth-creator.bash`
+- `zsh` / `sh`: writes `~/.config/oauth-creator/oauth-creator.sh`
+- `fish`: writes `~/.config/oauth-creator/oauth-creator.fish`
+- Unknown shell setup: still writes a snippet and prints the exact line to source from your own shell config
+
+In standard setups it will also add the matching `source` line to your shell config automatically. If that is not safe for your setup, the installer prints the snippet path and the exact command to run manually.
 
 ### Update
 
@@ -56,42 +67,37 @@ To update to the latest version, pull the changes and run install again:
 
 ```bash
 git pull
-./install.sh
+./install-cli.sh
 ```
 
 ---
 
-Both options will prompt you for configuration values and automatically save credentials to `.env`.
+Both flows prompt for the values they need and can save generated credentials directly to `.env`.
 
 ## Features
 
-- **GitHub OAuth:**
-  - Automatic OAuth app creation
-  - Create DEV + PROD apps at once - Generate credentials for both environments simultaneously
-  - Automatic client secret generation
-  - Allow deletion of any existing app through the GitHub API
-
-- **Google OAuth:**
-  - Automatic OAuth 2.0 client ID creation
-  - Automatic consent screen setup
-  - Project selection/creation support
-  - Support for Web and Desktop application types
-
-- **Shared Features:**
-  - **Flexible credential output:**
-    - Copy to clipboard (Mac/Linux)
-    - Write to `.env`, `.env.local`, or `.env.production`
-  - **Smart duplicate handling** - Never overwrites existing keys, uses `GENERATED_` prefixes  
+- Create GitHub OAuth apps automatically
+- Create Google OAuth clients automatically
+- Generate client secrets without manual setup
+- Create DEV and PROD GitHub apps in one run
+- Set up the Google consent screen as part of the flow
+- Select or create a Google Cloud project
+- Support Web and Desktop Google OAuth client types
+- Copy generated credentials to the clipboard
+- Write credentials to `.env`, `.env.local`, or `.env.production`
+- Avoid overwriting existing environment variables with smart `GENERATED_` prefixes
+- Navigate interactive menus with arrow keys or number keys
+- Delete existing GitHub OAuth apps through the GitHub API
 
 ## How it works
 
-GitHub deprecated the API endpoint for creating new OAuth apps. This tool:
+GitHub and Google do not provide a clean modern API for every OAuth app creation flow. This tool uses browser automation to handle the same steps you would normally do by hand:
 
 1. Opens a browser (headless or visible).  
-2. Navigates to verified GitHub URLs.  
+2. Navigates to the required GitHub or Google setup pages.  
 3. Fills out the form with your config.  
 4. Generates a client secret.  
-5. Saves the credentials to your `.env` file automatically.  
+5. Copies the credentials to your clipboard or saves them to your `.env` file.  
 
 ## Configuration
 
@@ -137,11 +143,10 @@ When writing credentials to an existing `.env` file, the script will **never ove
 - **Sudo mode**: When accessing sensitive settings, GitHub asks for your password. 
   - To **avoid manual entry**: Add `GITHUB_PASSWORD="your-password"` to your `.env` file. The script will auto-fill it.
   - Otherwise, the script will ask you to enter it in the terminal once per session.  
-- **Anything else**: I also don’t know. Any agent will fix it.  
+- **Anything else**: Re-run with a visible browser, check the prompts carefully, and inspect your `.env` output before retrying.
 
 ---
 
-xxx,
-Remco Stoeten
+## Why this exists
 
-Stars will make my e-penor grow, so please do.
+Creating OAuth apps should take seconds, not a full trip through settings pages and Google Cloud Console. This project exists to remove that setup tax.
