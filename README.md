@@ -130,6 +130,7 @@ When writing credentials to an existing `.env` file, the script will **never ove
 ## Troubleshooting
 
 - **“Browser already running”**: If you use a custom Brave or Chrome profile, you must close the browser before running the script. Playwright cannot attach to a running browser instance.  
+- **“Executable doesn't exist” / missing Playwright Chromium**: The script now tries to recover automatically by running `npm i -g playwright` when needed and then `playwright install chromium`. If that automatic recovery fails, run those commands manually and retry.  
 - **Sudo mode**: When accessing sensitive settings, GitHub asks for your password. 
   - To **avoid manual entry**: Add `GITHUB_PASSWORD="your-password"` to your `.env` file. The script will auto-fill it.
   - Otherwise, the script will ask you to enter it in the terminal once per session.  

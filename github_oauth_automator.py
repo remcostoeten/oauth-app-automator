@@ -42,6 +42,7 @@ from playwright.sync_api import (
 import platform
 import subprocess
 import re
+from urllib.parse import urlparse
 
 # Try to import AuditLogger, but don't fail if dependencies missing (e.g. during simple unit tests)
 try:
@@ -363,6 +364,54 @@ class BrowserManager:
             except OSError as e:
                 logger.warning(f"Could not remove lock file: {e}")
 
+    def _is_missing_playwright_browser_error(self, error: Exception) -> bool:
+        """Detect the common case where Playwright is installed but Chromium is not."""
+        message = str(error)
+        return "Executable doesn't exist" in message and "playwright install" in message
+
+    def _install_playwright_browser(self):
+        """
+        Ensure Playwright's Chromium binary exists.
+
+        Preferred recovery path:
+        1. Reuse an existing global `playwright` CLI if present
+        2. Install it via `npm i -g playwright`
+        3. Run `playwright install chromium`
+        """
+        playwright_cli = shutil.which("playwright")
+        npm_cli = shutil.which("npm")
+
+        if not playwright_cli:
+            if not npm_cli:
+                raise RuntimeError(
+                    "Playwright Chromium is missing and neither `playwright` nor "
+                    "`npm` is available.\n"
+                    "Install it manually with:\n"
+                    "  npm i -g playwright\n"
+                    "  playwright install chromium"
+                )
+
+            logger.warning(
+                "Playwright CLI not found. Installing it globally with npm..."
+            )
+            subprocess.run(
+                [npm_cli, "i", "-g", "playwright"],
+                check=True,
+            )
+            playwright_cli = shutil.which("playwright")
+
+        if not playwright_cli:
+            raise RuntimeError(
+                "Installed Playwright CLI could not be found in PATH.\n"
+                "Run these commands manually and try again:\n"
+                "  npm i -g playwright\n"
+                "  playwright install chromium"
+            )
+
+        logger.warning("Playwright Chromium is missing. Installing it now...")
+        subprocess.run([playwright_cli, "install", "chromium"], check=True)
+        logger.info("Playwright Chromium installed successfully")
+
     def start(self) -> Page:
         """
         Starts the browser with a persistent context.
@@ -380,17 +429,39 @@ class BrowserManager:
 
         # launch_persistent_context is key here!
         # It allows us to save cookies/session data to disk.
-        self.context = self.playwright.chromium.launch_persistent_context(
-            user_data_dir=str(self.session_dir),
-            executable_path=executable,
-            headless=self.headless,
-            viewport={"width": 1280, "height": 900},
-            slow_mo=50,  # Human-like delay
-            args=[
-                "--disable-blink-features=AutomationControlled",  # Reduce bot detection
+        launch_options = {
+            "user_data_dir": str(self.session_dir),
+            "executable_path": executable,
+            "headless": self.headless,
+            "viewport": {"width": 1280, "height": 900},
+            "slow_mo": 50,
+            "args": [
+                "--disable-blink-features=AutomationControlled",
                 "--no-default-browser-check",
             ],
-        )
+        }
+
+        try:
+            self.context = self.playwright.chromium.launch_persistent_context(
+                **launch_options
+            )
+        except Exception as e:
+            if not executable and self._is_missing_playwright_browser_error(e):
+                try:
+                    self._install_playwright_browser()
+                except subprocess.CalledProcessError as install_error:
+                    raise RuntimeError(
+                        "Playwright Chromium is missing and automatic installation failed.\n"
+                        "Run these commands manually and try again:\n"
+                        "  npm i -g playwright\n"
+                        "  playwright install chromium"
+                    ) from install_error
+
+                self.context = self.playwright.chromium.launch_persistent_context(
+                    **launch_options
+                )
+            else:
+                raise
 
         # Get the first page or create one
         return self.context.pages[0] if self.context.pages else self.context.new_page()
@@ -941,6 +1012,89 @@ def prompt_yes_no(text: str, default: bool = True) -> bool:
     return response in ["y", "yes", "true", "1"]
 
 
+def _normalize_path_input(value: str) -> str:
+    """Normalize user-entered path fragments to absolute URL paths."""
+    value = value.strip()
+    if not value or value == "/":
+        return "/"
+    return value if value.startswith("/") else f"/{value}"
+
+
+def _extract_default_path(url: str, fallback: str) -> str:
+    """Extract a path from a URL, preserving query/fragment when present."""
+    parsed = urlparse(url)
+    if not parsed.scheme or not parsed.netloc:
+        return fallback
+
+    path = parsed.path or "/"
+    if parsed.query:
+        path = f"{path}?{parsed.query}"
+    if parsed.fragment:
+        path = f"{path}#{parsed.fragment}"
+    return path
+
+
+def _build_url_from_base_and_path(base_url: str, path: str) -> str:
+    """Join a base URL and path while keeping root paths clean."""
+    normalized_path = _normalize_path_input(path)
+    if normalized_path == "/":
+        return base_url.rstrip("/")
+    return f"{base_url.rstrip('/')}{normalized_path}"
+
+
+def prompt_local_or_custom_urls(
+    provider: str, default_homepage: str, default_callback: str
+) -> tuple[str, str]:
+    """
+    Collect homepage/callback URLs.
+
+    Default flow assumes localhost and only asks for paths.
+    Users can type `d` to restart URL entry in custom-domain mode.
+    """
+    parsed_homepage = urlparse(default_homepage)
+    if parsed_homepage.hostname in {"localhost", "127.0.0.1"}:
+        local_base = f"{parsed_homepage.scheme or 'http'}://{parsed_homepage.netloc}"
+    else:
+        local_base = "http://localhost:3000"
+
+    local_homepage_path = _extract_default_path(default_homepage, "/")
+    local_callback_path = _extract_default_path(
+        default_callback, f"/api/auth/callback/{provider}"
+    )
+
+    print(
+        "\033[94m➤\033[0m URL mode: localhost paths only "
+        f"\033[90m[{local_base}]\033[0m"
+    )
+    print(
+        "   Press \033[96md\033[0m during path entry to restart in custom domain mode."
+    )
+
+    homepage_path = prompt(
+        f"Homepage path (after {local_base})", local_homepage_path
+    ).strip()
+    if homepage_path.lower() == "d":
+        print("\033[93m↺ Restarting URL prompts in custom domain mode...\033[0m")
+        homepage_url = prompt("Homepage URL", default_homepage).rstrip("/")
+        custom_callback = f"{homepage_url}/api/auth/callback/{provider}"
+        callback_url = prompt("Callback URL", custom_callback)
+        return homepage_url, callback_url
+
+    callback_path = prompt(
+        f"Callback path (after {local_base})", local_callback_path
+    ).strip()
+    if callback_path.lower() == "d":
+        print("\033[93m↺ Restarting URL prompts in custom domain mode...\033[0m")
+        homepage_url = prompt("Homepage URL", default_homepage).rstrip("/")
+        custom_callback = f"{homepage_url}/api/auth/callback/{provider}"
+        callback_url = prompt("Callback URL", custom_callback)
+        return homepage_url, callback_url
+
+    homepage_url = _build_url_from_base_and_path(local_base, homepage_path)
+    callback_url = _build_url_from_base_and_path(local_base, callback_path)
+    return homepage_url, callback_url
+
+
 def copy_to_clipboard(text: str) -> bool:
     """
     Copy text to clipboard. Works on Mac (pbcopy) and Linux (xclip/xsel).
@@ -1212,10 +1366,11 @@ def interactive_create():
 
     # Gather inputs with .env defaults
     app_name = prompt("Application name", default_app_name)
-    homepage_url = prompt("Homepage URL", default_homepage).rstrip("/")
-    
-    default_callback = f"{homepage_url}/api/auth/callback/github"
-    callback_url = prompt("Callback URL", default_callback)
+    homepage_url, callback_url = prompt_local_or_custom_urls(
+        "github",
+        default_homepage,
+        f"{default_homepage.rstrip('/')}/api/auth/callback/github",
+    )
 
     # Only prompt for password if not in env
     if default_password:
