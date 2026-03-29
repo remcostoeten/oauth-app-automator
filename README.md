@@ -12,6 +12,29 @@ If you want to understand the browser automation approach and security model, re
 
 ## Quick Start
 
+### Get the Project
+
+Clone the repository:
+
+```bash
+git clone https://github.com/remcostoeten/oauth-app-automator.git
+cd oauth-app-automator
+```
+
+Or download the latest `master` snapshot without Git:
+
+```bash
+curl -L https://github.com/remcostoeten/oauth-app-automator/archive/refs/heads/master.tar.gz -o oauth-app-automator.tar.gz
+tar -xzf oauth-app-automator.tar.gz
+cd oauth-app-automator-master
+```
+
+```bash
+wget https://github.com/remcostoeten/oauth-app-automator/archive/refs/heads/master.tar.gz -O oauth-app-automator.tar.gz
+tar -xzf oauth-app-automator.tar.gz
+cd oauth-app-automator-master
+```
+
 ### Option A: Local Usage
 
 **1. Setup (first time only)**  
@@ -149,4 +172,4 @@ When writing credentials to an existing `.env` file, the script will **never ove
 
 ## Why this exists
 
-Creating OAuth apps should take seconds, not a full trip through settings pages and Google Cloud Console. This project exists to remove that setup tax.
+Creating OAuth apps should take seconds, not a full trip through settings pages and Google Cloud Console.

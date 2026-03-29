@@ -1,6 +1,6 @@
 [project]
 name = "github-oauth-automator"
-version = "1.4.0"
+version = "1.4.1"
 description = "Automate GitHub OAuth app creation via browser automation"
 authors = [{name = "Remco Stoeten"}]
 readme = "README.md"

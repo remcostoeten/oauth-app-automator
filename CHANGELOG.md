@@ -3,6 +3,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.1] - 2026-03-29
+
+### Documentation
+- Added explicit `git clone`, `curl`, and `wget` download instructions to the README quick start
+- Removed the extra closing sentence from the README's `Why this exists` section
+
 ## [1.4.0] - 2026-01-07
 
 ### New Features
