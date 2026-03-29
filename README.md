@@ -97,6 +97,8 @@ GitHub deprecated the API endpoint for creating new OAuth apps. This tool:
 
 The `./setup.sh` script will create a `.env` file for you. For GitHub:
 
+`setup.sh` and the interactive GitHub flow now offer `Next.js (3000)`, `Vite (5173)`, `custom localhost port`, or `full custom URL` modes, then derive the callback URL from that choice.
+
 ```ini
 OAUTH_APP_NAME="My App"
 GITHUB_PASSWORD="your-password"             # Optional - for auto-filling Sudo Mode

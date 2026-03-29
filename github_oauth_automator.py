@@ -47,15 +47,22 @@ from urllib.parse import urlparse
 # Try to import AuditLogger, but don't fail if dependencies missing (e.g. during simple unit tests)
 try:
     from github_audit_logger import AuditLogger
+
     HAS_AUDIT_LOGGER = True
 except ImportError:
     HAS_AUDIT_LOGGER = False
-    logger = logging.getLogger("auth_automator") 
+    logger = logging.getLogger("auth_automator")
+
     # Fallback to avoid breaking if file missing
     class AuditLogger:
-        def __init__(self, *args): pass
-        def log_credential(self, *args, **kwargs): pass
-        def read_log(self): return []
+        def __init__(self, *args):
+            pass
+
+        def log_credential(self, *args, **kwargs):
+            pass
+
+        def read_log(self):
+            return []
 
 
 # Configure logging to look nice in the terminal
@@ -172,6 +179,20 @@ class GitHubSelectors:
         'button:has-text("Delete this OAuth application")',
         'button[type="submit"]:has-text("Delete")',
         'button.btn-danger[type="submit"]',
+    ]
+
+    # App Usage / Last used
+    LAST_USED_SELECTORS = [
+        'span:has-text("Last used")',
+        'li:has-text("Last used")',
+        'p:has-text("Last used")',
+        '.color-fg-muted:has-text("Last used")',
+    ]
+    LAST_USED_NEVER = [
+        'text="Never"',
+    ]
+    TOKEN_AGE_SELECTORS = [
+        'text*="token"',
     ]
 
 
@@ -694,10 +715,12 @@ class GitHubAutomator:
             # Navigate to the app's settings page
             logger.info(f"   Navigating to {app_url}...")
             # Use domcontentloaded for faster interaction, networkidle might be too strict
-            response = self.page.goto(app_url, timeout=20000, wait_until="domcontentloaded")
+            response = self.page.goto(
+                app_url, timeout=20000, wait_until="domcontentloaded"
+            )
             if not response:
                 logger.warning("   Navigation response was empty, but proceeding...")
-            
+
             # Check if we got redirected to login or sudo mode
             time.sleep(1)
             self.handle_sudo_mode()
@@ -771,6 +794,119 @@ class GitHubAutomator:
             logger.error(f"   ❌ Deletion failed: {e}")
             return False
 
+    def check_app_usage(self, app_url: str) -> dict:
+        """
+        Check when an OAuth app's token was last used.
+        Returns a dict with 'last_used', 'is_unused', and 'age_hours'.
+        """
+        result = {
+            "last_used": None,
+            "is_unused": False,
+            "age_hours": None,
+            "token_generated": None,
+        }
+
+        try:
+            logger.info(f"   Checking usage for app...")
+            response = self.page.goto(
+                app_url, timeout=20000, wait_until="domcontentloaded"
+            )
+            if not response:
+                logger.warning("   Navigation response was empty")
+                return result
+
+            time.sleep(1.5)
+            self.handle_sudo_mode()
+            time.sleep(0.5)
+
+            page_text = self.page.inner_text("body")
+
+            last_used_text = None
+            for selector in GitHubSelectors.LAST_USED_SELECTORS:
+                try:
+                    el = self.page.query_selector(selector)
+                    if el and el.is_visible():
+                        last_used_text = el.inner_text().strip()
+                        break
+                except Exception:
+                    continue
+
+            if last_used_text:
+                result["last_used"] = last_used_text
+                logger.info(f"   Last used: {last_used_text}")
+
+                if "never" in last_used_text.lower():
+                    result["is_unused"] = True
+                    logger.info(f"   → Token has NEVER been used")
+                else:
+                    hours = self._parse_last_used(last_used_text)
+                    if hours is not None:
+                        result["age_hours"] = hours
+                        if hours > 1:
+                            result["is_unused"] = True
+                            logger.info(
+                                f"   → Token unused for {hours}h (> 1h threshold)"
+                            )
+
+            token_generated = None
+            for pattern in ["token", "created", "generated"]:
+                try:
+                    elements = self.page.query_selector_all(f"text={pattern}")
+                    for el in elements:
+                        text = el.inner_text().lower()
+                        if "last used" not in text and (
+                            "token" in text or "created" in text
+                        ):
+                            token_generated = el.inner_text().strip()
+                            result["token_generated"] = token_generated
+                            break
+                except Exception:
+                    continue
+
+        except Exception as e:
+            logger.warning(f"   Could not check usage: {e}")
+
+        return result
+
+    def _parse_last_used(self, text: str) -> Optional[float]:
+        """Parse GitHub's 'Last used' text to extract hours."""
+        text_lower = text.lower()
+
+        import re
+
+        if "never" in text_lower:
+            return float("inf")
+
+        match = re.search(r"less than an hour", text_lower)
+        if match:
+            return 0.5
+
+        match = re.search(r"about (\d+) hour", text_lower)
+        if match:
+            return float(match.group(1))
+
+        match = re.search(r"(\d+) hour", text_lower)
+        if match:
+            return float(match.group(1))
+
+        match = re.search(r"about a day", text_lower)
+        if match:
+            return 24.0
+
+        match = re.search(r"(\d+) day", text_lower)
+        if match:
+            return float(match.group(1)) * 24
+
+        match = re.search(r"about a month", text_lower)
+        if match:
+            return 24 * 30
+
+        match = re.search(r"(\d+) month", text_lower)
+        if match:
+            return float(match.group(1)) * 24 * 30
+
+        return None
+
     def create_oauth_app(self, config: OAuthConfig) -> OAuthCredentials:
         """
         Navigates to the creation page and fills out the form.
@@ -798,45 +934,63 @@ class GitHubAutomator:
             # Wait for EITHER success redirect OR error message
             # Success: URL changes to /settings/applications/...
             # Error: Stays on /new and shows flash error or input-validation-error
-            
+
             try:
                 # Polling for success or error
-                for _ in range(10): # Try for ~5 seconds
+                for _ in range(10):  # Try for ~5 seconds
                     current_url = self.page.url
-                    if "/settings/applications/" in current_url and "/new" not in current_url:
-                        break # Success!
-                    
+                    if (
+                        "/settings/applications/" in current_url
+                        and "/new" not in current_url
+                    ):
+                        break  # Success!
+
                     # Check for errors
-                    error_el = self.page.query_selector('.flash-error, .error, #js-flash-container .flash-error')
+                    error_el = self.page.query_selector(
+                        ".flash-error, .error, #js-flash-container .flash-error"
+                    )
                     if error_el and error_el.is_visible():
                         error_text = error_el.inner_text().strip()
-                        if "already taken" in error_text.lower() or "name" in error_text.lower():
+                        if (
+                            "already taken" in error_text.lower()
+                            or "name" in error_text.lower()
+                        ):
                             logger.warning(f"⚠️  Name '{config.name}' is already taken.")
-                            print("\n\033[91m❌ Error: App name is already taken on GitHub.\033[0m")
-                            new_name = input("\033[94m➤\033[0m Enter a different app name: ").strip()
+                            print(
+                                "\n\033[91m❌ Error: App name is already taken on GitHub.\033[0m"
+                            )
+                            new_name = input(
+                                "\033[94m➤\033[0m Enter a different app name: "
+                            ).strip()
                             if new_name:
                                 config.name = new_name
                                 # Clear the input and retry loop
                                 self.page.fill(GitHubSelectors.APP_NAME_INPUT, "")
-                                break # Break inner check loop to retry outer submission loop
+                                break  # Break inner check loop to retry outer submission loop
                         else:
-                             # Some other error?
-                             logger.warning(f"⚠️  GitHub Error: {error_text}")
-                    
+                            # Some other error?
+                            logger.warning(f"⚠️  GitHub Error: {error_text}")
+
                     time.sleep(0.5)
-                else: 
-                     # If loop finishes without break, we might be stuck or slow
-                     if "/settings/applications/" in self.page.url and "/new" not in self.page.url:
-                         break # Success just in time
-                     
-                     # If we are here, we looped 10 times and didn't see success or explicit error. 
-                     # Check one last time for success, otherwise assume maybe network/timeout or silent fail
-                     pass
+                else:
+                    # If loop finishes without break, we might be stuck or slow
+                    if (
+                        "/settings/applications/" in self.page.url
+                        and "/new" not in self.page.url
+                    ):
+                        break  # Success just in time
+
+                    # If we are here, we looped 10 times and didn't see success or explicit error.
+                    # Check one last time for success, otherwise assume maybe network/timeout or silent fail
+                    pass
 
                 # Inner break above breaks the polling loop, but we need to check if we succeeded
-                if "/settings/applications/" in self.page.url and "/new" not in self.page.url:
-                    break # Break outer submission loop - SUCCESS
-                    
+                if (
+                    "/settings/applications/" in self.page.url
+                    and "/new" not in self.page.url
+                ):
+                    break  # Break outer submission loop - SUCCESS
+
             except Exception as e:
                 logger.error(f"Error checking submission: {e}")
                 # Don't break, maybe try again or manual intervention?
@@ -994,9 +1148,18 @@ def print_menu():
     print(
         "\033[93m│\033[0m  \033[92m5.\033[0m Delete OAuth app from GitHub    \033[93m│\033[0m"
     )
-    print("\033[93m│\033[0m  \033[92m6.\033[0m Clear browser session           \033[93m│\033[0m")
-    print("\033[93m│\033[0m  \033[92m7.\033[0m View Secure Audit Log           \033[93m│\033[0m")
-    print("\033[93m│\033[0m  \033[91m8.\033[0m Exit                            \033[93m│\033[0m")
+    print(
+        "\033[93m│\033[0m  \033[92m6.\033[0m Clear browser session           \033[93m│\033[0m"
+    )
+    print(
+        "\033[93m│\033[0m  \033[92m7.\033[0m View Secure Audit Log           \033[93m│\033[0m"
+    )
+    print(
+        "\033[93m│\033[0m  \033[92m8.\033[0m Auto-remove unused apps         \033[93m│\033[0m"
+    )
+    print(
+        "\033[93m│\033[0m  \033[91m9.\033[0m Exit                            \033[93m│\033[0m"
+    )
     print("\033[93m└─────────────────────────────────────┘\033[0m")
 
 
@@ -1027,7 +1190,9 @@ def prompt_yes_no(text: str, default: bool = True) -> bool:
     return response in ["y", "yes", "true", "1"]
 
 
-def prompt_choice(text: str, valid_choices: List[str], default: Optional[str] = None) -> str:
+def prompt_choice(
+    text: str, valid_choices: List[str], default: Optional[str] = None
+) -> str:
     """Prompt until the user enters one of the allowed choices."""
     valid_set = set(valid_choices)
     while True:
@@ -1086,77 +1251,117 @@ def _get_local_base_url(default_homepage: str) -> str:
     return "http://localhost:3000"
 
 
+def _default_local_url_mode(default_homepage: str) -> str:
+    """Choose the best default local URL preset for the current homepage."""
+    parsed_homepage = urlparse(default_homepage)
+    if parsed_homepage.hostname not in {"localhost", "127.0.0.1"}:
+        return "4"
+
+    port = parsed_homepage.port or (443 if parsed_homepage.scheme == "https" else 80)
+    if port == 3000:
+        return "1"
+    if port == 5173:
+        return "2"
+    return "3"
+
+
+def _prompt_localhost_port(default_port: int) -> int:
+    """Prompt for a localhost port until the user enters a valid value."""
+    while True:
+        value = prompt("Local development port", str(default_port))
+        try:
+            port = int(value)
+        except ValueError:
+            print("\033[91m❌ Port must be a number.\033[0m")
+            continue
+
+        if 1 <= port <= 65535:
+            return port
+
+        print("\033[91m❌ Port must be between 1 and 65535.\033[0m")
+
+
+def _prompt_custom_urls(
+    provider: str, default_homepage: str, default_callback: str
+) -> tuple[str, str]:
+    """Prompt for full homepage/callback URLs."""
+    homepage_url = prompt("Homepage URL", default_homepage).rstrip("/")
+    custom_callback = f"{homepage_url}/api/auth/callback/{provider}"
+    callback_url = prompt("Callback URL", default_callback or custom_callback)
+    return homepage_url, callback_url
+
+
 def prompt_local_or_custom_urls(
     provider: str, default_homepage: str, default_callback: str
 ) -> tuple[str, str]:
     """
     Collect homepage/callback URLs.
 
-    Default flow assumes localhost and only asks for paths.
-    Users can type `d` to restart URL entry in custom-domain mode.
+    The prompt offers local presets for common dev servers plus a full custom URL mode.
     """
-    local_base = _get_local_base_url(default_homepage)
-
     local_homepage_path = _extract_default_path(default_homepage, "/")
     local_callback_path = _extract_default_path(
         default_callback, f"/api/auth/callback/{provider}"
     )
+    mode_default = _default_local_url_mode(default_homepage)
 
-    print(
-        "\033[94m➤\033[0m URL mode: localhost paths only "
-        f"\033[90m[{local_base}]\033[0m"
-    )
-    print(
-        "   Press \033[96md\033[0m during path entry to restart in custom domain mode."
-    )
+    print("\033[94m➤\033[0m URL setup")
+    print("   1. Next.js localhost \033[90m[http://localhost:3000]\033[0m")
+    print("   2. Vite localhost    \033[90m[http://localhost:5173]\033[0m")
+    print("   3. Custom localhost port")
+    print("   4. Full custom URLs/domain")
+    mode = prompt_choice("Choose URL mode", ["1", "2", "3", "4"], mode_default)
+
+    if mode == "4":
+        return _prompt_custom_urls(provider, default_homepage, default_callback)
+
+    if mode == "1":
+        local_base = "http://localhost:3000"
+    elif mode == "2":
+        local_base = "http://localhost:5173"
+    else:
+        parsed_homepage = urlparse(default_homepage)
+        default_port = parsed_homepage.port or 3000
+        local_base = f"http://localhost:{_prompt_localhost_port(default_port)}"
 
     homepage_path = prompt(
         f"Homepage path (after {local_base})", local_homepage_path
     ).strip()
-    if homepage_path.lower() == "d":
-        print("\033[93m↺ Restarting URL prompts in custom domain mode...\033[0m")
-        homepage_url = prompt("Homepage URL", default_homepage).rstrip("/")
-        custom_callback = f"{homepage_url}/api/auth/callback/{provider}"
-        callback_url = prompt("Callback URL", custom_callback)
-        return homepage_url, callback_url
-
     callback_path = prompt(
         f"Callback path (after {local_base})", local_callback_path
     ).strip()
-    if callback_path.lower() == "d":
-        print("\033[93m↺ Restarting URL prompts in custom domain mode...\033[0m")
-        homepage_url = prompt("Homepage URL", default_homepage).rstrip("/")
-        custom_callback = f"{homepage_url}/api/auth/callback/{provider}"
-        callback_url = prompt("Callback URL", custom_callback)
-        return homepage_url, callback_url
-
     homepage_url = _build_url_from_base_and_path(local_base, homepage_path)
     callback_url = _build_url_from_base_and_path(local_base, callback_path)
     return homepage_url, callback_url
 
 
-def prompt_local_or_custom_homepage(
-    label: str, default_homepage: str
-) -> str:
-    """Prompt for a homepage using localhost path mode with custom-domain escape hatch."""
-    local_base = _get_local_base_url(default_homepage)
+def prompt_local_or_custom_homepage(label: str, default_homepage: str) -> str:
+    """Prompt for a homepage using local presets or a full custom URL."""
     local_homepage_path = _extract_default_path(default_homepage, "/")
+    mode_default = _default_local_url_mode(default_homepage)
 
-    print(
-        f"\033[94m➤\033[0m {label} URL mode: localhost path only "
-        f"\033[90m[{local_base}]\033[0m"
-    )
-    print(
-        "   Press \033[96md\033[0m to restart this prompt in custom domain mode."
-    )
+    print(f"\033[94m➤\033[0m {label} setup")
+    print("   1. Next.js localhost \033[90m[http://localhost:3000]\033[0m")
+    print("   2. Vite localhost    \033[90m[http://localhost:5173]\033[0m")
+    print("   3. Custom localhost port")
+    print("   4. Full custom URL/domain")
+    mode = prompt_choice("Choose URL mode", ["1", "2", "3", "4"], mode_default)
+
+    if mode == "4":
+        return prompt(f"{label} URL", default_homepage).rstrip("/")
+
+    if mode == "1":
+        local_base = "http://localhost:3000"
+    elif mode == "2":
+        local_base = "http://localhost:5173"
+    else:
+        parsed_homepage = urlparse(default_homepage)
+        default_port = parsed_homepage.port or 3000
+        local_base = f"http://localhost:{_prompt_localhost_port(default_port)}"
 
     homepage_path = prompt(
         f"{label} path (after {local_base})", local_homepage_path
     ).strip()
-    if homepage_path.lower() == "d":
-        print("\033[93m↺ Restarting homepage prompt in custom domain mode...\033[0m")
-        return prompt(f"{label} URL", default_homepage).rstrip("/")
-
     return _build_url_from_base_and_path(local_base, homepage_path)
 
 
@@ -1421,6 +1626,10 @@ def interactive_create():
     default_app_name = os.getenv("OAUTH_APP_NAME", "my-oauth-app")
     default_description = os.getenv("OAUTH_APP_DESCRIPTION", "Created via automation")
     default_homepage = os.getenv("OAUTH_BASE_URL", "http://localhost:3000")
+    default_callback = os.getenv(
+        "OAUTH_CALLBACK_URL",
+        f"{default_homepage.rstrip('/')}/api/auth/callback/github",
+    )
     default_password = os.getenv("GITHUB_PASSWORD", "")
 
     # Gather inputs with .env defaults
@@ -1428,7 +1637,7 @@ def interactive_create():
     homepage_url, callback_url = prompt_local_or_custom_urls(
         "github",
         default_homepage,
-        f"{default_homepage.rstrip('/')}/api/auth/callback/github",
+        default_callback,
     )
 
     # Only prompt for password if not in env
@@ -1489,15 +1698,18 @@ def interactive_create():
             write_credentials_to_env(creds, env_file)
 
         # Secure Logging
-        if HAS_AUDIT_LOGGER and os.getenv("ENABLE_SECURE_LOGGING", "false").lower() == "true":
+        if (
+            HAS_AUDIT_LOGGER
+            and os.getenv("ENABLE_SECURE_LOGGING", "false").lower() == "true"
+        ):
             try:
                 audit = AuditLogger()
                 audit.log_credential(
-                    app_name=creds.app_name, 
-                    client_id=creds.client_id, 
-                    client_secret=creds.client_secret, 
+                    app_name=creds.app_name,
+                    client_id=creds.client_id,
+                    client_secret=creds.client_secret,
                     homepage=homepage_url,
-                    env_type="DEV"
+                    env_type="DEV",
                 )
             except Exception as e:
                 logger.warning(f"Failed to securely log credential: {e}")
@@ -1595,7 +1807,13 @@ def interactive_create_dual():
     default_prod_homepage = os.getenv(
         "OAUTH_PROD_BASE_URL", "https://your-production-domain.com"
     )
-    callback_path = "/api/auth/callback/github"
+    default_dev_callback = os.getenv(
+        "OAUTH_CALLBACK_URL",
+        f"{default_dev_homepage.rstrip('/')}/api/auth/callback/github",
+    )
+    callback_path = _extract_default_path(
+        default_dev_callback, "/api/auth/callback/github"
+    )
     default_password = os.getenv("GITHUB_PASSWORD", "")
 
     print("\033[96mℹ️  This will create TWO OAuth apps:\033[0m")
@@ -1745,26 +1963,29 @@ GITHUB_CLIENT_SECRET_PROD="{prod_creds.client_secret}"
                 # Split: Write PROD with standard keys to separate file
                 # No forced prefix - allow standard duplicate handling (archive vs generated)
                 write_credentials_to_env(prod_creds, prod_file)
-        
+
         # Secure Logging
-        if HAS_AUDIT_LOGGER and os.getenv("ENABLE_SECURE_LOGGING", "false").lower() == "true":
+        if (
+            HAS_AUDIT_LOGGER
+            and os.getenv("ENABLE_SECURE_LOGGING", "false").lower() == "true"
+        ):
             try:
                 audit = AuditLogger()
                 # Log DEV
                 audit.log_credential(
-                    app_name=dev_creds.app_name, 
-                    client_id=dev_creds.client_id, 
-                    client_secret=dev_creds.client_secret, 
+                    app_name=dev_creds.app_name,
+                    client_id=dev_creds.client_id,
+                    client_secret=dev_creds.client_secret,
                     homepage=dev_homepage,
-                    env_type="DEV"
+                    env_type="DEV",
                 )
                 # Log PROD
                 audit.log_credential(
-                    app_name=prod_creds.app_name, 
-                    client_id=prod_creds.client_id, 
-                    client_secret=prod_creds.client_secret, 
+                    app_name=prod_creds.app_name,
+                    client_id=prod_creds.client_id,
+                    client_secret=prod_creds.client_secret,
                     homepage=prod_homepage,
-                    env_type="PROD"
+                    env_type="PROD",
                 )
             except Exception as e:
                 logger.warning(f"Failed to securely log credentials: {e}")
@@ -1883,23 +2104,29 @@ def interactive_view_audit_log():
     """Decrypt and display the secure audit log."""
     print("\n\033[1m🔐 Secure Audit Log\033[0m")
     print("\033[90m" + "─" * 40 + "\033[0m\n")
-    
-    if not HAS_AUDIT_LOGGER or not os.path.exists(os.path.expanduser("~/.oauth-automator/.key")):
+
+    if not HAS_AUDIT_LOGGER or not os.path.exists(
+        os.path.expanduser("~/.oauth-automator/.key")
+    ):
         print("\033[93m⚠️  No secure log or key found.\033[0m")
         print("   Secure logging might not be enabled or no apps created yet.")
-        
+
         if prompt_yes_no("\nEnable secure audit logging now?"):
             # Update .env
             env_path = Path(".env")
             if env_path.exists():
                 content = env_path.read_text()
                 if "ENABLE_SECURE_LOGGING=" in content:
-                    content = re.sub(r"ENABLE_SECURE_LOGGING=.*", "ENABLE_SECURE_LOGGING=true", content)
+                    content = re.sub(
+                        r"ENABLE_SECURE_LOGGING=.*",
+                        "ENABLE_SECURE_LOGGING=true",
+                        content,
+                    )
                 else:
                     content += "\nENABLE_SECURE_LOGGING=true"
                 env_path.write_text(content)
                 logger.info("✅ Updated .env configuration.")
-            
+
             # Initialize Logger (creates keys)
             try:
                 # Force environment var for this session
@@ -1914,31 +2141,31 @@ def interactive_view_audit_log():
     try:
         audit = AuditLogger()
         entries = audit.read_log()
-        
+
         if not entries:
             print("   \033[90m(Log is empty)\033[0m")
             return
-            
+
         print(f"\033[96mFound {len(entries)} entries:\033[0m\n")
-        
+
         # Sort by timestamp desc
-        entries.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
-        
+        entries.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+
         for i, entry in enumerate(entries, 1):
-            ts = entry.get('timestamp', 'Unknown').replace('T', ' ')[:19]
-            env = entry.get('env_type', 'UNK')
-            name = entry.get('app_name', 'Unknown')
-            cid = entry.get('client_id', '???')
-            
+            ts = entry.get("timestamp", "Unknown").replace("T", " ")[:19]
+            env = entry.get("env_type", "UNK")
+            name = entry.get("app_name", "Unknown")
+            cid = entry.get("client_id", "???")
+
             print(f"\033[94m[{i}] {ts} \033[0m| \033[1m{env}\033[0m | {name}")
             print(f"      Client ID: {cid}")
-        
+
         print()
         if prompt_yes_no("Reveal full secrets for an entry?", False):
             try:
                 choice = int(input("\033[94m➤\033[0m Enter entry number: ").strip())
                 if 1 <= choice <= len(entries):
-                    item = entries[choice-1]
+                    item = entries[choice - 1]
                     print(f"\n\033[1m🔓 Secrets for {item['app_name']}:\033[0m")
                     print(f"   Client ID:     {item['client_id']}")
                     print(f"   Client Secret: {item['client_secret']}")
@@ -1948,7 +2175,7 @@ def interactive_view_audit_log():
                     print("\033[91m❌ Invalid selection.\033[0m")
             except ValueError:
                 print("\033[91m❌ Invalid input.\033[0m")
-                
+
     except Exception as e:
         logger.error(f"Failed to read audit log: {e}")
 
@@ -2054,6 +2281,114 @@ def interactive_delete():
         browser_mgr.close()
 
 
+def interactive_auto_remove_unused():
+    """Auto-remove unused OAuth apps based on token usage."""
+    print("\n\033[1m🧹 Auto-Remove Unused OAuth Apps\033[0m")
+    print("\033[90m" + "─" * 40 + "\033[0m\n")
+    print("\033[93mThis will check each OAuth app for token usage and remove\033[0m")
+    print("\033[93mapps where the token has NEVER been used or hasn't been used\033[0m")
+    print("\033[93min over 1 hour.\033[0m\n")
+
+    if not prompt_yes_no("Continue?", False):
+        print("\033[93m⚠️  Cancelled.\033[0m")
+        return
+
+    browser_mgr = BrowserManager()
+
+    try:
+        page = browser_mgr.start()
+        automator = GitHubAutomator(page, password=None)
+
+        automator.ensure_logged_in()
+
+        apps = automator.list_oauth_apps()
+
+        if not apps:
+            print("\n\033[93m⚠️  No OAuth apps found.\033[0m")
+            return
+
+        print(f"\n\033[1mChecking {len(apps)} app(s) for usage...\033[0m\n")
+
+        unused_apps = []
+
+        for i, app in enumerate(apps, 1):
+            print(f"\033[90m[{i}/{len(apps)}]\033[0m Checking: {app['name']}...")
+            usage_info = automator.check_app_usage(app["url"])
+
+            if usage_info.get("is_unused"):
+                unused_apps.append(
+                    {
+                        "name": app["name"],
+                        "url": app["url"],
+                        "last_used": usage_info.get("last_used"),
+                        "age_hours": usage_info.get("age_hours"),
+                    }
+                )
+                status = "\033[91m→ UNUSED\033[0m"
+                if usage_info.get("last_used"):
+                    status += f" ({usage_info['last_used']})"
+                print(f"   {status}")
+            else:
+                if usage_info.get("last_used"):
+                    print(f"   \033[92m✓ Used: {usage_info['last_used']}\033[0m")
+                else:
+                    print(f"   \033[92m✓ In use\033[0m")
+
+        if not unused_apps:
+            print("\n\033[92m✅ No unused apps found!\033[0m")
+            return
+
+        print(f"\n\033[91m⚠️  Found {len(unused_apps)} unused app(s):\033[0m\n")
+        for app in unused_apps:
+            age_info = ""
+            if app.get("age_hours") == float("inf"):
+                age_info = " (Never used)"
+            elif app.get("age_hours"):
+                age_info = f" ({app['age_hours']}h unused)"
+            print(f"   \033[91m•\033[0m {app['name']}{age_info}")
+
+        if not prompt_yes_no(
+            f"\nDelete {len(unused_apps)} unused app(s)? This cannot be undone.", False
+        ):
+            print("\n\033[93m⚠️  Cancelled.\033[0m")
+            return
+
+        print(f"\n\033[1mDeleting unused apps...\033[0m\n")
+
+        deleted = []
+        failed = []
+
+        for app in unused_apps:
+            print(f"Deleting: {app['name']}...")
+            if automator.delete_oauth_app(app["url"], app["name"]):
+                deleted.append(app["name"])
+                print(f"\033[92m✅ Deleted {app['name']}\033[0m")
+            else:
+                failed.append(app["name"])
+                print(f"\033[91m❌ Failed to delete {app['name']}\033[0m")
+
+        print("\n" + "─" * 40)
+        if deleted:
+            print(f"\n\033[92m✅ Successfully deleted {len(deleted)} app(s):\033[0m")
+            for name in deleted:
+                print(f"   • {name}")
+
+        if failed:
+            print(f"\n\033[91m❌ Failed to delete {len(failed)} app(s):\033[0m")
+            for name in failed:
+                print(f"   • {name}")
+
+    except (ValueError, KeyboardInterrupt):
+        print("\n\033[93m⚠️  Cancelled.\033[0m")
+
+    except Exception as e:
+        logger.error(f"Failed: {e}")
+        input("Press Enter to close browser...")
+
+    finally:
+        browser_mgr.close()
+
+
 def clear_session():
     """Clear the saved browser session."""
     print("\n\033[1m🗑️  Clear Browser Session\033[0m")
@@ -2076,8 +2411,12 @@ def interactive_main():
     print_banner()
 
     while True:
-        print_menu()
-        choice = input("\n\033[94m➤\033[0m Enter choice (1-8): ").strip()
+        try:
+            print_menu()
+            choice = input("\n\033[94m➤\033[0m Enter choice (1-9): ").strip()
+        except KeyboardInterrupt:
+            print("\n\033[96m👋 Goodbye!\033[0m\n")
+            sys.exit(0)
 
         if choice == "1":
             interactive_create()
@@ -2094,10 +2433,12 @@ def interactive_main():
         elif choice == "7":
             interactive_view_audit_log()
         elif choice == "8":
+            interactive_auto_remove_unused()
+        elif choice == "9":
             print("\n\033[96m👋 Goodbye!\033[0m\n")
             break
         else:
-            print("\033[91m❌ Invalid choice. Please enter 1-8.\033[0m")
+            print("\033[91m❌ Invalid choice. Please enter 1-9.\033[0m")
 
 
 def main():

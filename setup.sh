@@ -34,6 +34,46 @@ log_warn() { echo -e "  ${YELLOW}⚠${NC} $1"; }
 log_error() { echo -e "  ${RED}✗${NC} $1"; }
 prompt() { echo -en "  ${CYAN}➤${NC} $1: "; }
 
+prompt_choice() {
+    local label="$1"
+    local default_value="$2"
+    local response
+
+    while true; do
+        prompt "${label} [${default_value}]"
+        read -r response
+        response="${response:-$default_value}"
+
+        case "$response" in
+            1|2|3|4)
+                printf '%s\n' "$response"
+                return 0
+                ;;
+            *)
+                log_warn "Please enter 1, 2, 3, or 4"
+                ;;
+        esac
+    done
+}
+
+prompt_port() {
+    local default_port="$1"
+    local response
+
+    while true; do
+        prompt "Local development port [${default_port}]"
+        read -r response
+        response="${response:-$default_port}"
+
+        if [[ "$response" =~ ^[0-9]+$ ]] && (( response >= 1 && response <= 65535 )); then
+            printf '%s\n' "$response"
+            return 0
+        fi
+
+        log_warn "Port must be a number between 1 and 65535"
+    done
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Step 1: Check uv is installed (it handles everything else)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -154,14 +194,57 @@ configure_env() {
     read -r app_desc
     app_desc="${app_desc:-Created via automation}"
     
-    prompt "Homepage URL [http://localhost:3000]"
-    read -r base_url
-    base_url="${base_url:-http://localhost:3000}"
-    
-    default_callback="${base_url}/api/auth/callback/github"
-    prompt "Callback URL [${default_callback}]"
-    read -r callback_url
-    callback_url="${callback_url:-$default_callback}"
+    echo -e "  ${BOLD}Development URL Setup:${NC}"
+    echo -e "    [1] Next.js localhost   (${CYAN}http://localhost:3000${NC})"
+    echo -e "    [2] Vite localhost      (${CYAN}http://localhost:5173${NC})"
+    echo -e "    [3] Custom localhost port"
+    echo -e "    [4] Full custom URL/domain"
+    dev_mode="$(prompt_choice "Choose development URL mode" "1")"
+
+    case "$dev_mode" in
+        1)
+            local_base_url="http://localhost:3000"
+            ;;
+        2)
+            local_base_url="http://localhost:5173"
+            ;;
+        3)
+            dev_port="$(prompt_port "3000")"
+            local_base_url="http://localhost:${dev_port}"
+            ;;
+        4)
+            prompt "Homepage URL [http://localhost:3000]"
+            read -r base_url
+            base_url="${base_url:-http://localhost:3000}"
+            ;;
+    esac
+
+    if [[ "$dev_mode" != "4" ]]; then
+        prompt "Homepage path [/]"
+        read -r homepage_path
+        homepage_path="${homepage_path:-/}"
+        if [[ "$homepage_path" != /* ]]; then
+            homepage_path="/${homepage_path}"
+        fi
+        if [[ "$homepage_path" == "/" ]]; then
+            base_url="${local_base_url}"
+        else
+            base_url="${local_base_url}${homepage_path}"
+        fi
+
+        prompt "Callback path [/api/auth/callback/github]"
+        read -r callback_path
+        callback_path="${callback_path:-/api/auth/callback/github}"
+        if [[ "$callback_path" != /* ]]; then
+            callback_path="/${callback_path}"
+        fi
+        callback_url="${local_base_url}${callback_path}"
+    else
+        default_callback="${base_url}/api/auth/callback/github"
+        prompt "Callback URL [${default_callback}]"
+        read -r callback_url
+        callback_url="${callback_url:-$default_callback}"
+    fi
     
     # Production settings
     echo ""
