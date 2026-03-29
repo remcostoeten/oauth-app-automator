@@ -46,6 +46,7 @@ from github_oauth_automator import (
     BrowserManager,
     copy_to_clipboard,
     prompt,
+    prompt_choice,
     prompt_local_or_custom_urls,
     prompt_yes_no,
     select_env_file,
@@ -528,7 +529,7 @@ def interactive_create():
     default_app_name = os.getenv("GOOGLE_OAUTH_APP_NAME", "my-google-app")
     default_homepage = os.getenv("OAUTH_BASE_URL", "http://localhost:3000")
     app_name = prompt("Application name", default_app_name)
-    app_type = prompt("Application type (web/desktop)", "web").lower()
+    app_type = prompt_choice("Application type", ["web", "desktop"], "web").lower()
     homepage_url, callback_url = prompt_local_or_custom_urls(
         "google",
         default_homepage,
@@ -622,7 +623,7 @@ def prompt_output_options() -> tuple:
     )
     print("\033[93m└─────────────────────────────────────┘\033[0m")
 
-    choice = input("\033[94m➤\033[0m Enter choice (1-4): ").strip()
+    choice = prompt_choice("Enter choice (1-4)", ["1", "2", "3", "4"], "4")
 
     copy_clipboard = False
     write_env = False

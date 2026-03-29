@@ -298,8 +298,23 @@ class BrowserManager:
             self.using_custom_profile = False
 
         self.headless = headless
+        self.slow_mo_ms = self._get_slow_mo_ms()
         self.playwright: Optional[Playwright] = None
         self.context: Optional[BrowserContext] = None
+
+    def _get_slow_mo_ms(self) -> int:
+        """Read optional Playwright slow motion delay from the environment."""
+        raw_value = os.getenv("PLAYWRIGHT_SLOW_MO", "0").strip()
+        if not raw_value:
+            return 0
+        try:
+            value = int(raw_value)
+            return max(value, 0)
+        except ValueError:
+            logger.warning(
+                f"Invalid PLAYWRIGHT_SLOW_MO value '{raw_value}', defaulting to 0"
+            )
+            return 0
 
     def _find_browser_executable(self) -> Optional[str]:
         """Tries to find a system-installed browser for a more natural experience."""
@@ -434,7 +449,7 @@ class BrowserManager:
             "executable_path": executable,
             "headless": self.headless,
             "viewport": {"width": 1280, "height": 900},
-            "slow_mo": 50,
+            "slow_mo": self.slow_mo_ms,
             "args": [
                 "--disable-blink-features=AutomationControlled",
                 "--no-default-browser-check",
@@ -1012,6 +1027,27 @@ def prompt_yes_no(text: str, default: bool = True) -> bool:
     return response in ["y", "yes", "true", "1"]
 
 
+def prompt_choice(text: str, valid_choices: List[str], default: Optional[str] = None) -> str:
+    """Prompt until the user enters one of the allowed choices."""
+    valid_set = set(valid_choices)
+    while True:
+        if default:
+            response = input(
+                f"\033[94m➤\033[0m {text} \033[90m[{default}]\033[0m: "
+            ).strip()
+            if not response:
+                return default
+        else:
+            response = input(f"\033[94m➤\033[0m {text}: ").strip()
+
+        if response in valid_set:
+            return response
+
+        print(
+            f"\033[91m❌ Invalid choice. Please enter one of: {', '.join(valid_choices)}.\033[0m"
+        )
+
+
 def _normalize_path_input(value: str) -> str:
     """Normalize user-entered path fragments to absolute URL paths."""
     value = value.strip()
@@ -1042,6 +1078,14 @@ def _build_url_from_base_and_path(base_url: str, path: str) -> str:
     return f"{base_url.rstrip('/')}{normalized_path}"
 
 
+def _get_local_base_url(default_homepage: str) -> str:
+    """Return the localhost base URL to use for path-only input mode."""
+    parsed_homepage = urlparse(default_homepage)
+    if parsed_homepage.hostname in {"localhost", "127.0.0.1"}:
+        return f"{parsed_homepage.scheme or 'http'}://{parsed_homepage.netloc}"
+    return "http://localhost:3000"
+
+
 def prompt_local_or_custom_urls(
     provider: str, default_homepage: str, default_callback: str
 ) -> tuple[str, str]:
@@ -1051,11 +1095,7 @@ def prompt_local_or_custom_urls(
     Default flow assumes localhost and only asks for paths.
     Users can type `d` to restart URL entry in custom-domain mode.
     """
-    parsed_homepage = urlparse(default_homepage)
-    if parsed_homepage.hostname in {"localhost", "127.0.0.1"}:
-        local_base = f"{parsed_homepage.scheme or 'http'}://{parsed_homepage.netloc}"
-    else:
-        local_base = "http://localhost:3000"
+    local_base = _get_local_base_url(default_homepage)
 
     local_homepage_path = _extract_default_path(default_homepage, "/")
     local_callback_path = _extract_default_path(
@@ -1093,6 +1133,31 @@ def prompt_local_or_custom_urls(
     homepage_url = _build_url_from_base_and_path(local_base, homepage_path)
     callback_url = _build_url_from_base_and_path(local_base, callback_path)
     return homepage_url, callback_url
+
+
+def prompt_local_or_custom_homepage(
+    label: str, default_homepage: str
+) -> str:
+    """Prompt for a homepage using localhost path mode with custom-domain escape hatch."""
+    local_base = _get_local_base_url(default_homepage)
+    local_homepage_path = _extract_default_path(default_homepage, "/")
+
+    print(
+        f"\033[94m➤\033[0m {label} URL mode: localhost path only "
+        f"\033[90m[{local_base}]\033[0m"
+    )
+    print(
+        "   Press \033[96md\033[0m to restart this prompt in custom domain mode."
+    )
+
+    homepage_path = prompt(
+        f"{label} path (after {local_base})", local_homepage_path
+    ).strip()
+    if homepage_path.lower() == "d":
+        print("\033[93m↺ Restarting homepage prompt in custom domain mode...\033[0m")
+        return prompt(f"{label} URL", default_homepage).rstrip("/")
+
+    return _build_url_from_base_and_path(local_base, homepage_path)
 
 
 def copy_to_clipboard(text: str) -> bool:
@@ -1154,17 +1219,13 @@ def select_env_file() -> str:
     )
     print("\033[93m└─────────────────────────────────────┘\033[0m")
 
-    choice = input("\n\033[94m➤\033[0m Enter choice (1-3): ").strip()
+    choice = prompt_choice("Enter choice (1-3)", ["1", "2", "3"], "1")
 
     if choice == "1":
         return ".env"
-    elif choice == "2":
+    if choice == "2":
         return ".env.local"
-    elif choice == "3":
-        return ".env.production"
-    else:
-        print("\033[93m⚠️  Invalid choice, defaulting to .env\033[0m")
-        return ".env"
+    return ".env.production"
 
 
 def get_unique_key_prefix(env_path: Path, base_key: str = "GITHUB_CLIENT_ID") -> str:
@@ -1270,7 +1331,7 @@ def write_credentials_to_env(
             "   \033[96m[2]\033[0m Archive old keys (\033[1m# OLD_...\033[0m) and use standard names"
         )
 
-        choice = input("\n\033[94m➤\033[0m Choice [1]: ").strip()
+        choice = prompt_choice("Choice", ["1", "2"], "1")
 
         if choice == "2":
             should_archive = True
@@ -1325,7 +1386,7 @@ def prompt_output_options() -> tuple:
     )
     print("\033[93m└─────────────────────────────────────┘\033[0m")
 
-    choice = input("\n\033[94m➤\033[0m Enter choice (1-4): ").strip()
+    choice = prompt_choice("Enter choice (1-4)", ["1", "2", "3", "4"], "4")
 
     copy_clipboard = False
     write_env = False
@@ -1342,8 +1403,6 @@ def prompt_output_options() -> tuple:
         env_file = select_env_file()
     elif choice == "4":
         pass  # Just display
-    else:
-        print("\033[93m⚠️  Invalid choice, just displaying.\033[0m")
 
     return (copy_clipboard, write_env, env_file)
 
@@ -1495,7 +1554,7 @@ def prompt_dual_env_options() -> tuple:
     )
     print("\033[93m└─────────────────────────────────────┘\033[0m")
 
-    choice = input("\n\033[94m➤\033[0m Enter choice (1-4): ").strip()
+    choice = prompt_choice("Enter choice (1-4)", ["1", "2", "3", "4"], "4")
 
     copy_clipboard = choice in ["1", "2", "3"]
     write_mode = "none"
@@ -1547,7 +1606,7 @@ def interactive_create_dual():
 
     # Gather inputs
     base_app_name = prompt("Base application name", default_app_name)
-    dev_homepage = prompt("DEV Homepage URL", default_dev_homepage).rstrip("/")
+    dev_homepage = prompt_local_or_custom_homepage("DEV Homepage", default_dev_homepage)
     prod_homepage = prompt("PROD Homepage URL", default_prod_homepage).rstrip("/")
     custom_callback_path = prompt("Callback path (same for both)", callback_path)
 

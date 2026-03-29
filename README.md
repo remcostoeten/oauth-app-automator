@@ -104,6 +104,7 @@ OAUTH_BASE_URL="http://localhost:3000"
 OAUTH_CALLBACK_URL="http://localhost:3000/api/auth/callback/github"
 OAUTH_PROD_BASE_URL="https://your-production-domain.com"  # For DEV+PROD mode
 OAUTH_PROD_CALLBACK_URL="https://your-production-domain.com/api/auth/callback/github"
+PLAYWRIGHT_SLOW_MO="0"                      # Optional - set >0 to slow browser actions for debugging
 ```
 
 For Google:
